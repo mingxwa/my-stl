@@ -7,7 +7,7 @@
 
 namespace std {
 
-struct self { self() = delete; };
+struct self_value_proxy { self_value_proxy() = delete; };
 
 }  // namespace std
 

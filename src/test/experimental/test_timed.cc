@@ -2,7 +2,6 @@
  * Copyright (c) 2018 Mingxin Wang. All rights reserved.
  */
 
-#include <conio.h>
 #include <cstdio>
 
 #include "../../main/experimental/concurrent.h"
@@ -32,12 +31,9 @@ int main() {
 
   circulation.trigger(std::chrono::system_clock::now() + time_unit(3000));
 
-  for (;;) {
-    char add = _getch();
-    if (add < '0' || add > '9') {
-      break;
-    }
-    task_count += add - '0';
+  int add;
+  while (scanf_s("%d", &add) != EOF && add >= 0) {
+    task_count += add;
     circulation.trigger();
   }
   puts("Main thread exit...");

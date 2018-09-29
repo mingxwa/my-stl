@@ -19,7 +19,7 @@
 #include "./self.h"
 #include "../p0957/proxy.h"
 #include "../p0957/mock/proxy_callable_impl.h"
-#include "../p0957/mock/proxy_callable_optional_pair_t_self_impl.h"
+#include "../p0957/mock/proxy_callable_optional_pair_t_self_value_proxy_impl.h"
 
 namespace std {
 
@@ -114,7 +114,7 @@ class mediator<void> {
   auto operator()(F&& f) { return f(); }
 };
 
-}
+}  // namespace wang
 
 template <bool DAEMON = false>
 struct thread_executor {
@@ -232,8 +232,8 @@ class thread_pool {
   shared_ptr<data_type> data_;
 };
 
-template <class F = value_proxy<
-    Callable<optional<pair<chrono::time_point<chrono::system_clock>, self>>()>>>
+template <class F = value_proxy<Callable<optional<pair<
+    chrono::time_point<chrono::system_clock>, self_value_proxy>>()>>>
 class timed_thread_pool {
   struct buffer_data;
   struct shared_data;
@@ -401,7 +401,7 @@ class timed_circulation {
   template <class Clock, class Duration>
   void trigger(const chrono::time_point<Clock, Duration>& when) const {
     shared_data& data = *data_ptr_;
-    data.executor_(when, task_type(data_ptr_, data.advance_version()));
+    executor_(when, task_type(data_ptr_, data.advance_version()));
   }
 
   void trigger() const { trigger(chrono::system_clock::now()); }
@@ -409,7 +409,7 @@ class timed_circulation {
 
  private:
   struct shared_data {
-    template <class _E, class _F>
+    template <class _F>
     explicit shared_data(_F&& functor)
         : state_(0u), functor_(forward<_F>(functor)) {}
 
