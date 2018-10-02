@@ -232,8 +232,10 @@ class thread_pool {
   shared_ptr<data_type> data_;
 };
 
-template <class F = value_proxy<Callable<optional<pair<
-    chrono::time_point<chrono::system_clock>, self_value_proxy>>()>>>
+template <class Clock = chrono::system_clock,
+    class Duration = typename Clock::duration,
+    class F = value_proxy<Callable<optional<
+        pair<chrono::time_point<Clock, Duration>, self_value_proxy>>()>>>
 class timed_thread_pool {
   struct buffer_data;
   struct shared_data;
@@ -267,14 +269,16 @@ class timed_thread_pool {
             shared.tasks_.pop();
           }
           for (;;) {
-            shared.pending_.insert(buffer);
-            while (buffer.cond_.wait_until(lk, buffer.task_->when_) ==
-                cv_status::no_timeout) {
-              if (shared.shutdown_) {
-                return;
+            if (Clock::now() < buffer.task_->when_) {
+              shared.pending_.insert(buffer);
+              while (buffer.cond_.wait_until(lk, buffer.task_->when_) ==
+                  cv_status::no_timeout) {
+                if (shared.shutdown_) {
+                  return;
+                }
               }
+              shared.pending_.erase(buffer);
             }
-            shared.pending_.erase(buffer);
             lk.unlock();
             auto next = buffer.task_->what_();
             if (!next.has_value()) {
@@ -308,45 +312,58 @@ class timed_thread_pool {
     }
   }
 
-  auto executor() const {
-    return [&shared = *data_](const auto& when, auto&&... args) {
+  auto executor() const { return executor_type(*data_); }
+
+  class executor_type {
+   public:
+    using clock = Clock;
+    using duration = Duration;
+
+    explicit executor_type(shared_data& data) : data_(data) {}
+
+    template <class _F>
+    void operator()(const chrono::time_point<Clock, Duration>& when, _F&& f)
+        const {
       buffer_data* buffer_ptr;
       {
-        lock_guard<mutex> lk(shared.mtx_);
-        if (shared.idle_.empty()) {
-          auto it = shared.pending_.begin();
-          if (it != shared.pending_.end() && when < it->get().task_->when_) {
+        lock_guard<mutex> lk(data_.mtx_);
+        if (data_.idle_.empty()) {
+          auto it = data_.pending_.begin();
+          if (it != data_.pending_.end() && when < it->get().task_->when_) {
             buffer_ptr = &it->get();
-            shared.pending_.erase(it);
-            shared.tasks_.emplace(move(*buffer_ptr->task_));
+            data_.pending_.erase(it);
+            data_.tasks_.emplace(*buffer_ptr->task_);
+            buffer_ptr->task_.emplace(when, forward<_F>(f));
+            data_.pending_.insert(*buffer_ptr);
           } else {
-            shared.tasks_.emplace(when, forward<decltype(args)>(args)...);
+            data_.tasks_.emplace(when, forward<_F>(f));
             return;
           }
         } else {
-          buffer_ptr = &shared.idle_.front().get();
-          shared.idle_.pop();
+          buffer_ptr = &data_.idle_.front().get();
+          data_.idle_.pop();
+          buffer_ptr->task_.emplace(when, forward<_F>(f));
         }
-        buffer_ptr->task_.emplace(when, forward<decltype(args)>(args)...);
-        shared.pending_.insert(*buffer_ptr);
       }
       buffer_ptr->cond_.notify_one();
-    };
-  }
+    }
+
+   private:
+    shared_data& data_;
+  };
 
  private:
   struct task_type {
-    template <class Clock, class Duration, class... Args>
-    explicit task_type(const chrono::time_point<Clock, Duration>& when,
-        Args&&... args) : when_(when), what_(forward<Args>(args)...) {}
+    template <class _F>
+    explicit task_type(const chrono::time_point<Clock, Duration>& when, _F&& f)
+        : when_(when), what_(forward<_F>(f)) {}
 
-    task_type(task_type&& rhs) = default;
     task_type(const task_type& rhs)
         : when_(rhs.when_), what_(move(rhs.what_)) {}
 
     task_type& operator=(task_type&&) = default;
 
-    chrono::time_point<chrono::system_clock> when_;
+    chrono::time_point<Clock, Duration> when_;
     mutable F what_;
   };
 
@@ -388,6 +405,8 @@ template <class E, class F>
 class timed_circulation {
   struct shared_data;
   struct task_type;
+  using clock = typename E::clock;
+  using duration = typename E::duration;
 
  public:
   template <class _E, class _F>
@@ -398,13 +417,14 @@ class timed_circulation {
   timed_circulation(timed_circulation&&) = default;
   timed_circulation(const timed_circulation&) = delete;
 
-  template <class Clock, class Duration>
-  void trigger(const chrono::time_point<Clock, Duration>& when) const {
+  template <class Rep, class Period>
+  void trigger(const chrono::duration<Rep, Period>& delay) const {
     shared_data& data = *data_ptr_;
-    executor_(when, task_type(data_ptr_, data.advance_version()));
+    executor_(clock::now() + delay,
+              task_type(data_ptr_, data.advance_version()));
   }
 
-  void trigger() const { trigger(chrono::system_clock::now()); }
+  void trigger() const { trigger(chrono::duration<int>::zero()); }
   void suspend() const { data_ptr_->advance_version(); }
 
  private:
@@ -433,7 +453,7 @@ class timed_circulation {
     task_type(task_type&&) = default;
     task_type(const task_type&) = default;
 
-    optional<pair<chrono::time_point<chrono::system_clock>, task_type>>
+    optional<pair<chrono::time_point<clock, duration>, task_type>>
         operator()() {
       shared_data& data = *data_ptr_;
       uint64_t s = data.state_.load(memory_order_relaxed);
@@ -471,7 +491,7 @@ class timed_circulation {
                 s, s & IDLE_MASK, memory_order_relaxed)) {
               if (version_ == (s & IDLE_MASK)) {
                 if (gap.has_value()) {
-                  return make_pair(chrono::system_clock::now() + gap.value(),
+                  return make_pair(clock::now() + gap.value(),
                                    move(*this));
                 }
               }

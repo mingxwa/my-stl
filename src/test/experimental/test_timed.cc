@@ -29,7 +29,7 @@ int main() {
     return time_unit(2000);
   });
 
-  circulation.trigger(std::chrono::system_clock::now() + time_unit(3000));
+  circulation.trigger(time_unit(3000));
 
   int add;
   while (scanf_s("%d", &add) != EOF && add >= 0) {
