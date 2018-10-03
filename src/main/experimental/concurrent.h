@@ -16,10 +16,10 @@
 #include <future>
 #include <optional>
 
-#include "./self.h"
 #include "../p0957/proxy.h"
 #include "../p0957/mock/proxy_callable_impl.h"
-#include "../p0957/mock/proxy_callable_optional_pair_t_self_value_proxy_impl.h"
+#include "../p1230/placeholders.h"
+#include "../p0957/mock/proxy_callable_optional_pair_t_recursive_template_argument_proxy_impl.h"
 
 namespace std {
 
@@ -235,7 +235,8 @@ class thread_pool {
 template <class Clock = chrono::high_resolution_clock,
     class Duration = typename Clock::duration,
     class F = value_proxy<Callable<optional<
-        pair<chrono::time_point<Clock, Duration>, self_value_proxy>>()>>>
+        pair<chrono::time_point<Clock, Duration>,
+             recursive_template_argument_proxy>>()>>>
 class timed_thread_pool {
   struct buffer_data;
   struct shared_data;
