@@ -22,7 +22,7 @@ int main() {
   std::async_mutex<decltype(executor)> mtx(executor);
   std::set<int> s;
   std::promise<void> p;
-  auto now = std::chrono::system_clock::now();
+  auto now = std::chrono::high_resolution_clock::now();
 
   for (int i = 0; i < task_count; ++i) {
     timed_executor(now + time_unit(rand() % 1000 + 500), [&, i] {
