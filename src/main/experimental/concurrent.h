@@ -418,16 +418,15 @@ struct circulation_data {
 };
 
 template <class Clock, class Duration, class F>
-class circulating_execution {
+class timed_circulation {
  public:
-  explicit circulating_execution(
-      const shared_ptr<circulation_data<F>>& data_ptr, uint64_t version)
-      : data_ptr_(data_ptr), version_(version) {}
+  explicit timed_circulation(const shared_ptr<circulation_data<F>>& data_ptr,
+      uint64_t version) : data_ptr_(data_ptr), version_(version) {}
 
-  circulating_execution(circulating_execution&&) = default;
-  circulating_execution(const circulating_execution&) = default;
+  timed_circulation(timed_circulation&&) = default;
+  timed_circulation(const timed_circulation&) = default;
 
-  optional<pair<chrono::time_point<Clock, Duration>, circulating_execution>>
+  optional<pair<chrono::time_point<Clock, Duration>, timed_circulation>>
       operator()() {
     circulation_data<F>& data = *data_ptr_;
     uint64_t s = data.state_.load(memory_order_relaxed);
@@ -484,25 +483,25 @@ class circulating_execution {
 }  // namespace wang
 
 template <class Clock, class Duration, class E, class F>
-class timed_circulation {
+class circulation_trigger {
  public:
   template <class _E, class _F>
-  explicit timed_circulation(_E&& executor, _F&& functor)
+  explicit circulation_trigger(_E&& executor, _F&& functor)
       : executor_(forward<_E>(executor)), data_ptr_(
       make_shared<wang::circulation_data<F>>(forward<_F>(functor))) {}
 
-  timed_circulation(timed_circulation&&) = default;
-  timed_circulation(const timed_circulation&) = delete;
+  circulation_trigger(circulation_trigger&&) = default;
+  circulation_trigger(const circulation_trigger&) = delete;
 
   template <class Rep, class Period>
-  void trigger(const chrono::duration<Rep, Period>& delay) const {
+  void fire(const chrono::duration<Rep, Period>& delay) const {
     wang::circulation_data<F>& data = *data_ptr_;
     executor_(Clock::now() + delay,
-        wang::circulating_execution<Clock, Duration, F>(
+        wang::timed_circulation<Clock, Duration, F>(
         data_ptr_, data.advance_version()));
   }
 
-  void trigger() const { trigger(chrono::duration<int>::zero()); }
+  void fire() const { fire(chrono::duration<int>::zero()); }
   void suspend() const { data_ptr_->advance_version(); }
 
  private:
@@ -513,7 +512,7 @@ class timed_circulation {
 template <class Clock = chrono::steady_clock,
     class Duration = typename Clock::duration, class E, class F>
 auto make_timed_circulation(E&& executor, F&& functor) {
-  return timed_circulation<Clock, Duration, decay_t<E>, decay_t<F>>(
+  return circulation_trigger<Clock, Duration, decay_t<E>, decay_t<F>>(
       forward<E>(executor), forward<F>(functor));
 }
 

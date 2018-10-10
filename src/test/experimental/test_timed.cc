@@ -12,7 +12,7 @@ std::atomic_int task_count = 3;
 int main() {
   using time_unit = std::chrono::milliseconds;
 
-  auto circulation = std::make_timed_circulation(pool.executor(),
+  auto trigger = std::make_timed_circulation(pool.executor(),
       [&]() -> std::optional<time_unit> {
     int current = task_count.load();
     do {
@@ -29,12 +29,12 @@ int main() {
     return time_unit(2000);
   });
 
-  circulation.trigger(time_unit(3000));
+  trigger.fire(time_unit(3000));
 
   int add;
   while (scanf_s("%d", &add) != EOF && add >= 0) {
     task_count += add;
-    circulation.trigger();
+    trigger.fire();
   }
   puts("Main thread exit...");
 }
