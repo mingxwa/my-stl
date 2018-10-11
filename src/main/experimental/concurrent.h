@@ -392,10 +392,9 @@ class timed_thread_pool {
 
 namespace wang {
 
-inline constexpr int CIRCULATION_RESERVATION_OFFSET = 16;
-inline constexpr uint32_t CIRCULATION_IDLE_MASK = 0x00007FFF;
-inline constexpr uint32_t CIRCULATION_RUNNING_MASK = 0x00008000;
-inline constexpr uint32_t CIRCULATION_NO_RESERVATION_MASK = 0x0000FFFF;
+inline constexpr uint32_t CIRCULATION_VERSION_MASK = 0x3FFFFFFF;
+inline constexpr uint32_t CIRCULATION_RUNNING_MASK = 0x40000000;
+inline constexpr uint32_t CIRCULATION_RESERVATION_MASK = 0x80000000;
 
 template <class F>
 struct circulation_data {
@@ -406,7 +405,7 @@ struct circulation_data {
   uint32_t advance_version() {
     uint32_t s = state_.load(memory_order_relaxed), v;
     do {
-      v = (s + 1) & CIRCULATION_IDLE_MASK;
+      v = (s + 1) & CIRCULATION_VERSION_MASK;
     } while (!state_.compare_exchange_weak(
         s, (s & CIRCULATION_RUNNING_MASK) | v, memory_order_relaxed));
     return v;
@@ -430,14 +429,12 @@ class timed_circulation {
     circulation_data<F>& data = *data_ptr_;
     uint32_t s = data.state_.load(memory_order_relaxed);
     for (;;) {
-      if ((s & CIRCULATION_IDLE_MASK) != version_) {
+      if ((s & CIRCULATION_VERSION_MASK) != version_) {
         return nullopt;
       }
       if (s & CIRCULATION_RUNNING_MASK) {
         if (data.state_.compare_exchange_weak(
-            s, (s & CIRCULATION_NO_RESERVATION_MASK)
-                | (s << CIRCULATION_RESERVATION_OFFSET),
-            memory_order_relaxed)) {
+            s, s | CIRCULATION_RESERVATION_MASK, memory_order_relaxed)) {
           return nullopt;
         }
       } else {
@@ -453,20 +450,17 @@ class timed_circulation {
       atomic_thread_fence(memory_order_release);
       s = data.state_.load(memory_order_relaxed);
       for (;;) {
-        if ((s & CIRCULATION_NO_RESERVATION_MASK)
-            == (s >> CIRCULATION_RESERVATION_OFFSET)) {
+        if (s & CIRCULATION_RESERVATION_MASK) {
           if (data.state_.compare_exchange_weak(
-              s, s & CIRCULATION_NO_RESERVATION_MASK, memory_order_relaxed)) {
-            version_ = s & CIRCULATION_IDLE_MASK;
+              s, s & ~CIRCULATION_RESERVATION_MASK, memory_order_relaxed)) {
+            version_ = s & CIRCULATION_VERSION_MASK;
             break;
           }
         } else {
           if (data.state_.compare_exchange_weak(
-              s, s & CIRCULATION_IDLE_MASK, memory_order_relaxed)) {
-            if (version_ == (s & CIRCULATION_IDLE_MASK)) {
-              if (gap.has_value()) {
-                return make_pair(Clock::now() + gap.value(), move(*this));
-              }
+              s, s & ~CIRCULATION_RUNNING_MASK, memory_order_relaxed)) {
+            if (version_ == (s & CIRCULATION_VERSION_MASK) && gap.has_value()) {
+              return make_pair(Clock::now() + gap.value(), move(*this));
             }
             return nullopt;
           }
