@@ -392,11 +392,10 @@ class timed_thread_pool {
 
 namespace wang {
 
-inline constexpr int CIRCULATION_RESERVATION_OFFSET = 32;
-inline constexpr uint64_t CIRCULATION_IDLE_MASK = 0x000000007FFFFFFFULL;
-inline constexpr uint64_t CIRCULATION_RUNNING_MASK = 0x0000000080000000ULL;
-inline constexpr uint64_t CIRCULATION_NO_RESERVATION_MASK
-    = CIRCULATION_IDLE_MASK | CIRCULATION_RUNNING_MASK;
+inline constexpr int CIRCULATION_RESERVATION_OFFSET = 16;
+inline constexpr uint32_t CIRCULATION_IDLE_MASK = 0x00007FFF;
+inline constexpr uint32_t CIRCULATION_RUNNING_MASK = 0x00008000;
+inline constexpr uint32_t CIRCULATION_NO_RESERVATION_MASK = 0x0000FFFF;
 
 template <class F>
 struct circulation_data {
@@ -404,8 +403,8 @@ struct circulation_data {
   explicit circulation_data(_F&& functor) : state_(0u),
       functor_(forward<_F>(functor)) {}
 
-  uint64_t advance_version() {
-    uint64_t s = state_.load(memory_order_relaxed), v;
+  uint32_t advance_version() {
+    uint32_t s = state_.load(memory_order_relaxed), v;
     do {
       v = (s + 1) & CIRCULATION_IDLE_MASK;
     } while (!state_.compare_exchange_weak(
@@ -413,7 +412,7 @@ struct circulation_data {
     return v;
   }
 
-  atomic_uint64_t state_;
+  atomic_uint32_t state_;
   F functor_;
 };
 
@@ -421,7 +420,7 @@ template <class Clock, class Duration, class F>
 class timed_circulation {
  public:
   explicit timed_circulation(const shared_ptr<circulation_data<F>>& data_ptr,
-      uint64_t version) : data_ptr_(data_ptr), version_(version) {}
+      uint32_t version) : data_ptr_(data_ptr), version_(version) {}
 
   timed_circulation(timed_circulation&&) = default;
   timed_circulation(const timed_circulation&) = default;
@@ -429,7 +428,7 @@ class timed_circulation {
   optional<pair<chrono::time_point<Clock, Duration>, timed_circulation>>
       operator()() {
     circulation_data<F>& data = *data_ptr_;
-    uint64_t s = data.state_.load(memory_order_relaxed);
+    uint32_t s = data.state_.load(memory_order_relaxed);
     for (;;) {
       if ((s & CIRCULATION_IDLE_MASK) != version_) {
         return nullopt;
@@ -477,7 +476,7 @@ class timed_circulation {
   }
 
   shared_ptr<circulation_data<F>> data_ptr_;
-  uint64_t version_;
+  uint32_t version_;
 };
 
 }  // namespace wang
