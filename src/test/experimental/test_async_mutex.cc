@@ -21,7 +21,7 @@ int main() {
   auto timed_executor = timed_pool.executor();
   std::async_mutex<decltype(executor)> mtx(executor);
   std::set<int> s;
-  std::promise<void> p;
+  std::binary_semaphore sem;
   auto now = std::chrono::high_resolution_clock::now();
 
   for (int i = 0; i < task_count; ++i) {
@@ -31,13 +31,13 @@ int main() {
         return s.size() == task_count;
       }, [&](bool ok) {
         if (ok) {
-          p.set_value();
+          sem.release();
         }
       });
       return std::nullopt;
     });
   }
-  p.get_future().wait();
+  sem.acquire();
 
   puts("Main thread exit...");
 }

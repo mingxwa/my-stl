@@ -10,6 +10,7 @@
 
 #include "../p1144/trivially_relocatable.h"
 #include "../p1172/memory_allocator.h"
+#include "../common/more_utility.h"
 
 namespace std {
 
@@ -106,51 +107,6 @@ struct reference_meta<M, false> {
   };
 };
 
-template <class T, class MA, bool EBO = !is_final_v<MA> && is_empty_v<MA>>
-struct managed_storage : private MA {
- public:
-  template <class _MA, class... Args>
-  explicit managed_storage(_MA&& ma, Args&&... args) : MA(forward<_MA>(ma)),
-      data_(forward<Args>(args)...) {}
-
-  MA& get_allocator() { return *this; }
-
- private:
-  T data_;
-};
-
-template <class T, class MA>
-struct managed_storage<T, MA, false> {
- public:
-  template <class _MA, class... Args>
-  explicit managed_storage(_MA&& ma, Args&&... args)
-      : data_(forward<Args>(args)...), ma_(forward<_MA>(ma)) {}
-
-  MA& get_allocator() { return ma_; }
-
- private:
-  T data_;
-  MA ma_;
-};
-
-template <class T, class MA, class... Args>
-managed_storage<T, decay_t<MA>>* construct(MA&& ma, Args&&... args) {
-  using storage = managed_storage<T, decay_t<MA>>;
-  storage* value = static_cast<storage*>(
-      ma.allocate(integral_constant<size_t, sizeof(storage)>{},
-                  integral_constant<size_t, alignof(storage)>{}));
-  return new (value) storage(forward<MA>(ma), forward<Args>(args)...);
-}
-
-template <class T, class MA>
-void destruct(managed_storage<T, MA>* value) {
-  using storage = managed_storage<T, MA>;
-  MA ma = move(value->get_allocator());
-  value->~storage();
-  ma.deallocate(value, integral_constant<size_t, sizeof(storage)>{},
-                integral_constant<size_t, alignof(storage)>{});
-}
-
 template <size_t S, size_t A>
 struct value_meta_ext_t {
  public:
@@ -175,7 +131,7 @@ struct value_meta_ext_t {
 
   template <class T, class MA>
   static void destroy_large(value_storage<S, A>* erased) {
-    destruct(static_cast<managed_storage<T, MA>*>(erased->ptr_));
+    static_cast<managed_storage<T, MA>*>(erased->ptr_)->destroy();
   }
 
   template <class T>
@@ -186,9 +142,7 @@ struct value_meta_ext_t {
 
   template <class T, class MA>
   static void copy_large(value_storage<S, A>* src, value_storage<S, A>* dest) {
-    dest->ptr_ = construct<T>(
-        static_cast<managed_storage<T, MA>*>(src->ptr_)->get_allocator(),
-        *reinterpret_cast<const T*>(src->ptr_));
+    dest->ptr_ = static_cast<const managed_storage<T, MA>*>(src->ptr_)->clone();
   }
 
   template <class T>
@@ -319,7 +273,7 @@ class value_addresser {
 
   template <class T, class MA, class... Args>
   void init_large(MA&& ma, Args&&... args) {
-    storage_.ptr_ = wang::construct<T>(
+    storage_.ptr_ = wang::make_managed_storage<T>(
         forward<MA>(ma), std::forward<Args>(args)...);
     meta_ = &wang::META_STORAGE<wang::value_meta_t<M, S, A>, T, decay_t<MA>>;
   }

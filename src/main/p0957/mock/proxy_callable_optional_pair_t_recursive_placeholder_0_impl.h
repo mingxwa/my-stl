@@ -2,16 +2,16 @@
  * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
  */
 
-#ifndef SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_TEMPLATE_ARGUMENT_PROXY_IMPL_H_
-#define SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_TEMPLATE_ARGUMENT_PROXY_IMPL_H_
+#ifndef SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_PLACEHOLDER_0_IMPL_H_
+#define SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_PLACEHOLDER_0_IMPL_H_
 
 /**
  * template <class T>
  * facade Callable;  // undefined
  *
  * template <class First>
- * facade Callable<optional<pair<First, recursive_template_argument_proxy>>>()> {
- *   optional<pair<First, proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>>>> operator()();
+ * facade Callable<optional<pair<First, p1230::recursive_placeholder_0>>>()> {
+ *   optional<pair<First, proxy<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>>>> operator()();
  * };
  */
 
@@ -21,7 +21,7 @@ struct Callable;
 namespace std {
 
 template <class First, template <bool, bool> class E>
-struct facade_meta_t<Callable<optional<pair<First, recursive_template_argument_proxy>>()>, E> {
+struct facade_meta_t<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>, E> {
   template <class, class>
   friend class proxy;
 
@@ -35,15 +35,15 @@ struct facade_meta_t<Callable<optional<pair<First, recursive_template_argument_p
 
  private:
   template <class T>
-  static optional<pair<First, value_proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>>>> callable_op_0(E<false, false> erased) {
+  static optional<pair<First, value_proxy<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>>>> callable_op_0(E<false, false> erased) {
     return erased.cast(in_place_type<T>)();
   }
 
-  optional<pair<First, value_proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>>>> (*callable_op_0_)(E<false, false>);
+  optional<pair<First, value_proxy<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>>>> (*callable_op_0_)(E<false, false>);
 };
 
 template <class First, class A>
-class proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>, A> : public A {
+class proxy<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>, A> : public A {
  public:
   proxy() : A() {}
 
@@ -99,7 +99,7 @@ class proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>
     return *this;
   }
 
-  optional<pair<First, value_proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>>>> operator()() {
+  optional<pair<First, value_proxy<Callable<optional<pair<First, p1230::recursive_placeholder_0>>()>>>> operator()() {
     const A& a = static_cast<const A&>(*this);
     return a.meta().callable_op_0_(a.data());
   }
@@ -107,4 +107,4 @@ class proxy<Callable<optional<pair<First, recursive_template_argument_proxy>>()>
 
 }  // namespace std
 
-#endif  // SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_TEMPLATE_ARGUMENT_PROXY_IMPL_H_
+#endif  // SRC_MAIN_P0957_MOCK_PROXY_CALLABLE_OPTIONAL_PAIR_T_RECURSIVE_PLACEHOLDER_0_IMPL_H_

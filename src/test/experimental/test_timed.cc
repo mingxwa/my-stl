@@ -3,6 +3,7 @@
  */
 
 #include <cstdio>
+#include <iostream>
 
 #include "../../main/experimental/concurrent.h"
 
@@ -32,7 +33,7 @@ int main() {
   trigger.fire(time_unit(3000));
 
   int add;
-  while (scanf_s("%d", &add) != EOF && add >= 0) {
+  while (std::cin >> add && add >= 0) {
     task_count += add;
     trigger.fire();
   }

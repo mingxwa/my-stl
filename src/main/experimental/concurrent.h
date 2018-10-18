@@ -19,35 +19,246 @@
 #include "../p0957/proxy.h"
 #include "../p0957/mock/proxy_callable_impl.h"
 #include "../p1230/placeholders.h"
-#include "../p0957/mock/proxy_callable_optional_pair_t_recursive_template_argument_proxy_impl.h"
+#include "../p0957/mock/proxy_callable_optional_pair_t_recursive_placeholder_0_impl.h"
 
 namespace std {
+
+template <class, class>
+class async_concurrent_callback;
+
+template <class T, class CB>
+class concurrent_context : private wang::wrapper<T>, private wang::wrapper<CB> {
+  template <class, class>
+  friend class async_concurrent_callback;
+
+ public:
+  template <class _CB, class... Args>
+  explicit concurrent_context(size_t count, _CB&& callback, Args&&... args)
+      : wang::wrapper<T>(false_type{}, forward<Args>(args)...),
+        wang::wrapper<CB>(false_type{}, forward<_CB>(callback)), count_(count) {}
+
+  auto cast() const { return wang::wrapper<T>::cast(); }
+  T consume() { return wang::wrapper<T>::consume(); }
+
+  void fork(size_t count) const {
+    count_.fetch_add(count, memory_order_relaxed);
+  }
+
+  void join() const {
+    if (count_.fetch_sub(1u, memory_order_release) == 1u) {
+      atomic_thread_fence(memory_order_acquire);
+      concurrent_context* current = const_cast<concurrent_context*>(this);
+      invoke(current->wang::template wrapper<CB>::consume(), *current);
+    }
+  }
+
+ private:
+  mutable atomic_size_t count_;
+};
+
+class binary_semaphore {
+ public:
+  void acquire() { prom_.get_future().wait(); }
+
+  void release() { prom_.set_value(); }
+
+ private:
+  std::promise<void> prom_;
+};
+
+template <class BS>
+class sync_concurrent_callback {
+ public:
+  explicit sync_concurrent_callback(BS& semaphore) : semaphore_(semaphore) {}
+  sync_concurrent_callback(const sync_concurrent_callback&) = default;
+
+  template <class T, class CB>
+  T operator()(concurrent_context<T, CB>& context) {
+    semaphore_.release();
+    return context.consume();
+  }
+
+ private:
+  BS& semaphore_;
+};
+
+template <class CB, class MA>
+class async_concurrent_callback : private wang::wrapper<CB>,
+    private wang::wrapper<MA> {
+
+ public:
+  template <class _CB, class _MA>
+  explicit async_concurrent_callback(_CB&& callback, _MA&& ma)
+      : wang::wrapper<CB>(false_type{}, forward<_CB>(callback)),
+        wang::wrapper<MA>(false_type{}, forward<_MA>(ma)) {}
+
+  async_concurrent_callback(async_concurrent_callback&&) = default;
+  async_concurrent_callback(const async_concurrent_callback&) = default;
+
+  template <class T, class _CB>
+  void operator()(concurrent_context<T, _CB>& context) {
+    context.wang::template wrapper<T>::consume(wang::wrapper<CB>::consume());
+    wang::destroy(wang::wrapper<MA>::consume(), &context);
+  }
+};
+
+template <class T, class CB, class MA, class... Args>
+auto* make_async_concurrent_context(size_t count, CB&& callback,
+    true_type, MA&& ma, Args&&... args) {
+  using ACB = async_concurrent_callback<decay_t<CB>, decay_t<MA>>;
+  return wang::construct<concurrent_context<ACB, T>>(
+      forward<MA>(ma), count, ACB(ma, forward<CB>(callback)),
+      forward<Args>(args)...);
+}
+
+template <class T, class CB, class... Args>
+auto* make_async_concurrent_context(size_t count, CB&& callback,
+    false_type, Args&&... args) {
+  return make_async_concurrent_context(count, forward<CB>(callback),
+      true_type{}, memory_allocator{}, forward<Args>(args)...);
+}
+
+template <class T, class CB, class... Args>
+auto* make_async_concurrent_context(size_t count, CB&& callback,
+    Args&&... args) {
+  return make_async_concurrent_context(count, forward<CB>(callback),
+      false_type{}, forward<Args>(args)...);
+}
+
+namespace wang {
+
+template <class T>
+class concurrent_callback_proxy {
+  using context = concurrent_context<T, concurrent_callback_proxy>;
+
+ public:
+  template <class CB>
+  concurrent_callback_proxy(CB&& callback) : callback_(forward<CB>(callback)) {}
+
+  void operator()(concurrent_context<T, concurrent_callback_proxy>& c)
+      { invoke(move(callback_), c); }
+
+ private:
+  value_proxy<Callable<void(context&)>> callback_;
+};
+
+}  // namespace wang
+
+template <class, class, class, class>
+class concurrent_invoker;
+
+template <class T, class CB = wang::concurrent_callback_proxy<T>>
+class concurrent_breakpoint {
+  template <class, class, class, class>
+  friend class concurrent_invoker;
+
+ public:
+  concurrent_breakpoint(concurrent_breakpoint&& rhs)
+      : context_(rhs.context_) { rhs.context_ = nullptr; }
+
+  ~concurrent_breakpoint() {
+    if (context_ != nullptr) {
+      context_->join();
+    }
+  }
+
+  auto context() { return context_->cast(); }
+
+  explicit operator bool() const noexcept { return context_; }
+
+ private:
+  explicit concurrent_breakpoint(const concurrent_context<T, CB>* context)
+      : context_(context) {}
+
+  const concurrent_context<T, CB>* context_;
+};
+
+template <class T, class CB = wang::concurrent_callback_proxy<T>,
+    class Proc = value_proxy<Callable<void(concurrent_breakpoint<T, CB>)>>,
+    class Container = vector<Proc>>
+class concurrent_invoker {
+  using context = concurrent_context<T, CB>;
+
+ public:
+  template <class E, class F>
+  void add(E&& executor, F&& f) {
+    add([executor = forward<E>(executor),
+        f = forward<F>(f)](concurrent_breakpoint<T, CB>&& breakpoint) mutable {
+      executor([f = forward<F>(f), breakpoint = move(breakpoint)]() mutable {
+        invoke(forward<F>(f), move(breakpoint));
+      });
+    });
+  }
+
+  template <class _Proc>
+  void add(_Proc&& proc) {
+    container_.emplace_back(forward<_Proc>(proc));
+  }
+
+  template <class BS, class... Args>
+  T sync_invoke(BS& semaphore, Args&&... args) {
+    context c(container_.size(), sync_concurrent_callback(semaphore),
+        forward<Args>(args)...);
+    do_invoke(&c);
+    semaphore.acquire();
+    return c.consume();
+  }
+
+  template <class... Args>
+  T sync_invoke(Args&&... args) {
+    binary_semaphore sem;
+    return sync_invoke(sem, forward<Args>(args)...);
+  }
+
+  template <class _CB, class MA, class... Args>
+  void async_invoke(_CB&& callback, true_type, MA&& ma, Args&&... args) {
+    do_invoke(wang::construct<context>(forward<MA>(ma), container_.size(),
+        async_concurrent_callback<decay_t<_CB>, decay_t<MA>>(
+        forward<_CB>(callback), ma), forward<Args>(args)...));
+  }
+
+  template <class _CB, class... Args>
+  void async_invoke(_CB&& callback, false_type, Args&&... args) {
+    async_invoke(forward<_CB>(callback), true_type{}, memory_allocator{},
+        forward<Args>(args)...);
+  }
+
+  template <class _CB, class... Args>
+  void async_invoke(_CB&& callback, Args&&... args) {
+    async_invoke(forward<_CB>(callback), false_type{}, forward<Args>(args)...);
+  }
+
+  void fork(concurrent_breakpoint<T, CB>& breakpoint) {
+    breakpoint.context_->fork(container_.size());
+    do_invoke(breakpoint.context_);
+  }
+
+ private:
+  void do_invoke(const context* context) {
+    for (Proc& proc : container_) {
+      invoke(forward<Proc>(proc), concurrent_breakpoint<T, CB>(context));
+    }
+  }
+
+  Container container_;
+};
 
 namespace wang {
 
 struct thread_hub {
+  thread_hub() : context_(1, sem_) {}
+
   ~thread_hub() {
-    if (!detach()) {
-      sem_.get_future().wait();
-    }
+    context_.join();
+    sem_.acquire();
   }
 
-  void attach() { count_.fetch_add(1, memory_order_relaxed); }
+  void attach() { context_.fork(1); }
+  void detach() { context_.join(); }
 
-  bool detach() {
-    atomic_thread_fence(memory_order_release);
-    size_t c = count_.load(memory_order_relaxed);
-    do {
-      if (c == 0u) {
-        atomic_thread_fence(memory_order_acquire);
-        return true;
-      }
-    } while (!count_.compare_exchange_weak(c, c - 1, memory_order_relaxed));
-    return false;
-  }
-
-  atomic_size_t count_;
-  promise<void> sem_;
+ private:
+  binary_semaphore sem_;
+  concurrent_context<void, sync_concurrent_callback<binary_semaphore>> context_;
 };
 
 template <class T>
@@ -90,30 +301,6 @@ class mutex_queue {
   atomic<node*> tail_;
 };
 
-template <class R>
-class mediator {
- public:
-  template <class F, class... Args>
-  explicit mediator(F&& f, Args&&... args)
-      : value_(f(forward<Args>(args)...)) {}
-
-  template <class F>
-  auto operator()(F&& f) { return f(forward<R>(value_)); }
-
- private:
-  R value_;
-};
-
-template <>
-class mediator<void> {
- public:
-  template <class F, class... Args>
-  explicit mediator(F&& f, Args&&... args) { f(forward<Args>(args)...); }
-
-  template <class F>
-  auto operator()(F&& f) { return f(); }
-};
-
 }  // namespace wang
 
 template <bool DAEMON = false>
@@ -122,11 +309,9 @@ struct thread_executor {
   void operator()(F&& f) const {
     static wang::thread_hub hub;
     hub.attach();
-    thread([f = forward<F>(f)] {
-      f();
-      if (hub.detach()) {
-        hub.sem_.set_value();
-      }
+    thread([f = forward<F>(f)]() mutable {
+      invoke(forward<F>(f));
+      hub.detach();
     }).detach();
   }
 };
@@ -154,9 +339,10 @@ class async_mutex {
         async_mutex& mtx) mutable {
       mtx.executor_([cs = forward<CS>(cs), cb = forward<CB>(cb), &mtx]()
           mutable {
-        wang::mediator<decltype(cs())> med(cs);
+        wang::wrapper<decltype(invoke(forward<CS>(cs)))>
+            res(true_type{}, forward<CS>(cs));
         mtx.release();
-        med(cb);
+        res.consume(forward<CB>(cb));
       });
     });
     if (pending_.fetch_add(1, memory_order_relaxed) == 0u) {
@@ -180,9 +366,8 @@ class async_mutex {
 template <class F = value_proxy<Callable<void()>>>
 class thread_pool {
  public:
-  template <class Executor = thread_executor<>>
-  explicit thread_pool(size_t thread_count,
-                       const Executor& executor = Executor())
+  template <class E = thread_executor<>>
+  explicit thread_pool(size_t thread_count, const E& executor = E())
       : data_(make_shared<data_type>()) {
     for (size_t i = 0; i < thread_count; ++i) {
       executor([data = data_] {
@@ -236,16 +421,16 @@ template <class Clock = chrono::high_resolution_clock,
     class Duration = typename Clock::duration,
     class F = value_proxy<Callable<optional<
         pair<chrono::time_point<Clock, Duration>,
-             recursive_template_argument_proxy>>()>>>
+        p1230::recursive_placeholder_0>>()>>>
 class timed_thread_pool {
   struct buffer_data;
   struct shared_data;
   struct task_type;
 
  public:
-  template <class Executor = thread_executor<>>
+  template <class E = thread_executor<>>
   explicit timed_thread_pool(size_t count,
-                             const Executor& executor = Executor())
+                             const E& executor = E())
       : data_(make_shared<shared_data>(count)) {
     for (size_t i = 0; i < count; ++i) {
       executor([data_ = data_, i] {
@@ -502,7 +687,7 @@ class circulation_trigger {
   shared_ptr<wang::circulation_data<F>> data_ptr_;
 };
 
-template <class Clock = chrono::steady_clock,
+template <class Clock = chrono::high_resolution_clock,
     class Duration = typename Clock::duration, class E, class F>
 auto make_timed_circulation(E&& executor, F&& functor) {
   return circulation_trigger<Clock, Duration, decay_t<E>, decay_t<F>>(
