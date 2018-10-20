@@ -23,22 +23,13 @@
 
 namespace std {
 
-template <class, class>
-class async_concurrent_callback;
-
 template <class T, class CB>
-class concurrent_context : private wang::wrapper<T>, private wang::wrapper<CB> {
-  template <class, class>
-  friend class async_concurrent_callback;
-
+class concurrent_context : public wang::wrapper<T> {
  public:
   template <class _CB, class... Args>
   explicit concurrent_context(size_t count, _CB&& callback, Args&&... args)
       : wang::wrapper<T>(false_type{}, forward<Args>(args)...),
-        wang::wrapper<CB>(false_type{}, forward<_CB>(callback)), count_(count) {}
-
-  auto cast() const { return wang::wrapper<T>::cast(); }
-  T consume() { return wang::wrapper<T>::consume(); }
+        count_(count), callback_(forward<_CB>(callback)) {}
 
   void fork(size_t count) const {
     count_.fetch_add(count, memory_order_relaxed);
@@ -48,12 +39,13 @@ class concurrent_context : private wang::wrapper<T>, private wang::wrapper<CB> {
     if (count_.fetch_sub(1u, memory_order_release) == 1u) {
       atomic_thread_fence(memory_order_acquire);
       concurrent_context* current = const_cast<concurrent_context*>(this);
-      invoke(current->wang::template wrapper<CB>::consume(), *current);
+      invoke(forward<CB>(current->callback_), *current);
     }
   }
 
  private:
   mutable atomic_size_t count_;
+  CB callback_;
 };
 
 class binary_semaphore {
@@ -75,7 +67,7 @@ class sync_concurrent_callback {
   template <class T, class CB>
   T operator()(concurrent_context<T, CB>& context) {
     semaphore_.release();
-    return context.consume();
+    return context.get();
   }
 
  private:
@@ -83,23 +75,24 @@ class sync_concurrent_callback {
 };
 
 template <class CB, class MA>
-class async_concurrent_callback : private wang::wrapper<CB>,
-    private wang::wrapper<MA> {
-
+class async_concurrent_callback : private wang::wrapper<MA> {
  public:
   template <class _CB, class _MA>
   explicit async_concurrent_callback(_CB&& callback, _MA&& ma)
-      : wang::wrapper<CB>(false_type{}, forward<_CB>(callback)),
-        wang::wrapper<MA>(false_type{}, forward<_MA>(ma)) {}
+      : wang::wrapper<MA>(forward<_MA>(ma)),
+        callback_(forward<_CB>(callback)) {}
 
   async_concurrent_callback(async_concurrent_callback&&) = default;
   async_concurrent_callback(const async_concurrent_callback&) = default;
 
   template <class T, class _CB>
   void operator()(concurrent_context<T, _CB>& context) {
-    context.wang::template wrapper<T>::consume(wang::wrapper<CB>::consume());
-    wang::destroy(wang::wrapper<MA>::consume(), &context);
+    context.consume(forward<CB>(callback_));
+    wang::destroy(this->get(), &context);
   }
+
+ private:
+  CB callback_;
 };
 
 template <class T, class CB, class MA, class... Args>
@@ -162,7 +155,7 @@ class concurrent_breakpoint {
     }
   }
 
-  auto context() { return context_->cast(); }
+  auto context() { return context_->get(); }
 
   explicit operator bool() const noexcept { return context_; }
 
@@ -178,14 +171,16 @@ template <class T, class CB = wang::concurrent_callback_proxy<T>,
     class Container = vector<Proc>>
 class concurrent_invoker {
   using context = concurrent_context<T, CB>;
+  using breakpoint = concurrent_breakpoint<T, CB>;
 
  public:
   template <class E, class F>
   void add(E&& executor, F&& f) {
     add([executor = forward<E>(executor),
-        f = forward<F>(f)](concurrent_breakpoint<T, CB>&& breakpoint) mutable {
-      executor([f = forward<F>(f), breakpoint = move(breakpoint)]() mutable {
-        invoke(forward<F>(f), move(breakpoint));
+        f = decorator<decay_t<F>>::wrap(forward<F>(f))](
+        breakpoint&& bp) mutable {
+      executor([f = move(f), bp = move(bp)]() mutable {
+        invoke(move(f), move(bp));
       });
     });
   }
@@ -201,7 +196,7 @@ class concurrent_invoker {
         forward<Args>(args)...);
     do_invoke(&c);
     semaphore.acquire();
-    return c.consume();
+    return c.get();
   }
 
   template <class... Args>
@@ -228,17 +223,44 @@ class concurrent_invoker {
     async_invoke(forward<_CB>(callback), false_type{}, forward<Args>(args)...);
   }
 
-  void fork(concurrent_breakpoint<T, CB>& breakpoint) {
-    breakpoint.context_->fork(container_.size());
-    do_invoke(breakpoint.context_);
+  void fork(breakpoint& bp) {
+    bp.context_->fork(container_.size());
+    do_invoke(bp.context_);
   }
 
  private:
-  void do_invoke(const context* context) {
+  void do_invoke(const context* c) {
     for (Proc& proc : container_) {
-      invoke(forward<Proc>(proc), concurrent_breakpoint<T, CB>(context));
+      invoke(forward<Proc>(proc), breakpoint(c));
     }
   }
+
+  template <class F, bool BREAKPOINT_CONSUMER = is_invocable_v<F, breakpoint>,
+      bool CONTEXT_CONSUMER = is_invocable_v<F, const add_lvalue_reference<T>>>
+  struct decorator;
+
+  template <class F>
+  struct decorator<F, true, false> {
+    static inline F&& wrap(F&& f) { return forward<F>(f); }
+  };
+
+  template <class F>
+  struct decorator<F, false, true> {
+    static inline auto wrap(F&& f) {
+      return [f = forward<F>(f)](breakpoint&& bp) mutable {
+        invoke(forward<F>(f), bp.context());
+      };
+    }
+  };
+
+  template <class F>
+  struct decorator<F, false, false> {
+    static inline auto wrap(F&& f) {
+      return [f = forward<F>(f)](breakpoint&&) mutable {
+        invoke(forward<F>(f));
+      };
+    }
+  };
 
   Container container_;
 };
@@ -246,14 +268,14 @@ class concurrent_invoker {
 namespace wang {
 
 struct thread_hub {
-  thread_hub() : context_(1, sem_) {}
+  thread_hub() : context_(1u, sem_) {}
 
   ~thread_hub() {
     context_.join();
     sem_.acquire();
   }
 
-  void attach() { context_.fork(1); }
+  void attach() { context_.fork(1u); }
   void detach() { context_.join(); }
 
  private:

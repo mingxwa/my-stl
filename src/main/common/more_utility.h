@@ -10,77 +10,82 @@
 
 namespace std::wang {
 
-template <class T, bool EBO = !is_final_v<T> && is_empty_v<T>>
-class wrapper : private T {
+template <class T, bool EBO>
+class wrapper_impl : private T {
  public:
   template <class F, class... Args>
-  explicit wrapper(true_type, F&& f, Args&&... args)
+  explicit wrapper_impl(true_type, F&& f, Args&&... args)
       : T(invoke(forward<F>(f), forward<Args>(args)...)) {}
 
   template <class... Args>
-  explicit wrapper(false_type, Args&&... args)
+  explicit wrapper_impl(false_type, Args&&... args)
       : T(forward<Args>(args)...) {}
 
   template <class... Args>
-  explicit wrapper(Args&&... args)
-      : wrapper(false_type{}, forward<Args>(args)...) {}
+  explicit wrapper_impl(Args&&... args)
+      : wrapper_impl(false_type{}, forward<Args>(args)...) {}
 
-  wrapper(wrapper&&) = default;
-  wrapper(const wrapper&) = default;
+  wrapper_impl(wrapper_impl&&) = default;
+  wrapper_impl(const wrapper_impl&) = default;
 
-  const T& cast() const { return *this; }
+  template <class F>
+  void consume(F&& f) const { invoke(forward<F>(f), get()); }
+  const T& get() const { return *this; }
 
   template <class F>
   void consume(F&& f) { invoke(forward<F>(f), forward<T>(*this)); }
-  T consume() { return forward<T>(*this); }
+  T get() { return forward<T>(*this); }
 };
 
 template <class T>
-class wrapper<T, false> {
+class wrapper_impl<T, false> {
  public:
   template <class F, class... Args>
-  explicit wrapper(true_type, F&& f, Args&&... args)
+  explicit wrapper_impl(true_type, F&& f, Args&&... args)
       : data_(invoke(forward<F>(f), forward<Args>(args)...)) {}
 
   template <class... Args>
-  explicit wrapper(false_type, Args&&... args)
+  explicit wrapper_impl(false_type, Args&&... args)
       : data_(forward<Args>(args)...) {}
 
   template <class... Args>
-  explicit wrapper(Args&&... args)
-      : wrapper(false_type{}, forward<Args>(args)...) {}
+  explicit wrapper_impl(Args&&... args)
+      : wrapper_impl(false_type{}, forward<Args>(args)...) {}
 
-  wrapper(wrapper&&) = default;
-  wrapper(const wrapper&) = default;
+  wrapper_impl(wrapper_impl&&) = default;
+  wrapper_impl(const wrapper_impl&) = default;
 
-  const T& cast() const { return data_; }
+  template <class F>
+  void consume(F&& f) const { invoke(forward<F>(f), get()); }
+  const T& get() const { return data_; }
 
   template <class F>
   void consume(F&& f) { invoke(forward<F>(f), forward<T>(data_)); }
-  T consume() { return forward<T>(data_); }
+  T get() { return forward<T>(data_); }
 
  private:
   T data_;
 };
 
 template <>
-class wrapper<void, false> {
+class wrapper_impl<void, false> {
  public:
   template <class F, class... Args>
-  explicit wrapper(true_type, F&& f, Args&&... args)
+  explicit wrapper_impl(true_type, F&& f, Args&&... args)
       { invoke(forward<F>(f), forward<Args>(args)...); }
 
-  explicit wrapper(false_type = {}) {}
+  explicit wrapper_impl(false_type = {}) {}
 
-  wrapper(wrapper&&) = default;
-  wrapper(const wrapper&) = default;
-
-  void cast() const {}
+  wrapper_impl(wrapper_impl&&) = default;
+  wrapper_impl(const wrapper_impl&) = default;
 
   template <class F>
-  void consume(F&& f) { invoke(forward<F>(f)); }
-  void consume() {}
+  void consume(F&& f) const { invoke(forward<F>(f)); }
+  void get() const {}
 };
+
+template <class T>
+using wrapper = wrapper_impl<T, !is_final_v<T> && is_empty_v<T>>;
 
 template <class T, class MA, class... Args>
 T* construct(MA&& ma, Args&&... args) {
@@ -116,12 +121,12 @@ struct managed_storage : private wrapper<T>, private wrapper<MA> {
       : wrapper<T>(forward<Args>(args)...), wrapper<MA>(forward<_MA>(ma)) {}
 
   managed_storage* clone() const {
-    MA ma = wrapper<MA>::cast();
-    return make_managed_storage<T>(forward<MA>(ma), wrapper<T>::cast());
+    MA ma = wrapper<MA>::get();
+    return make_managed_storage<T>(forward<MA>(ma), wrapper<T>::get());
   }
 
   void destroy() {
-    MA ma = wrapper<MA>::consume();
+    MA ma = wrapper<MA>::get();
     std::wang::destroy(forward<MA>(ma), this);
   }
 };

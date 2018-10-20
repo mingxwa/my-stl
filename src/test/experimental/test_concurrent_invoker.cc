@@ -20,7 +20,7 @@ int main() {
 
   std::concurrent_invoker<void> invoker2;
   for (int i = 0; i < 10; ++i) {
-    invoker2.add(std::thread_executor<>(), [](std::concurrent_breakpoint<void>) {
+    invoker2.add(std::thread_executor<>(), [] {
       std::this_thread::sleep_for(std::chrono::seconds(1));
       puts("Hello World! -- from invoker 2");
       std::this_thread::sleep_for(std::chrono::seconds(1));
