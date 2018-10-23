@@ -50,7 +50,7 @@ class FaDemo1 {
     puts("FaDemo1: fun_a_0 called");
     printf("Input: %f\n", x);
     printf("Check: %d\n\n", num_);
-    return (int)-x;
+    return static_cast<int>(-x);
   }
 
  private:

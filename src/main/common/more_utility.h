@@ -34,7 +34,7 @@ class wrapper_impl : private T {
 
   template <class F>
   void consume(F&& f) { invoke(forward<F>(f), forward<T>(*this)); }
-  T get() { return forward<T>(*this); }
+  T&& get() { return forward<T>(*this); }
 };
 
 template <class T>
@@ -61,7 +61,7 @@ class wrapper_impl<T, false> {
 
   template <class F>
   void consume(F&& f) { invoke(forward<F>(f), forward<T>(data_)); }
-  T get() { return forward<T>(data_); }
+  T&& get() { return forward<T>(data_); }
 
  private:
   T data_;
@@ -101,8 +101,18 @@ void destroy(MA&& ma, T* value) {
                 integral_constant<size_t, alignof(T)>{});
 }
 
-template <class, class>
-struct managed_storage;
+template <class T, class MA>
+struct managed_storage : private wrapper<T>, private wrapper<MA> {
+ public:
+  template <class _MA, class... Args>
+  explicit managed_storage(_MA&& ma, Args&&... args)
+      : wrapper<T>(forward<Args>(args)...), wrapper<MA>(forward<_MA>(ma)) {}
+
+  void destroy() {
+    MA ma = wrapper<MA>::get();
+    std::wang::destroy(forward<MA>(ma), this);
+  }
+};
 
 template <class T, class MA, class... Args>
 managed_storage<T, decay_t<MA>>* make_managed_storage(MA&& ma, Args&&... args) {
@@ -112,24 +122,6 @@ managed_storage<T, decay_t<MA>>* make_managed_storage(MA&& ma, Args&&... args) {
                   integral_constant<size_t, alignof(storage)>{}));
   return new (value) storage(forward<MA>(ma), forward<Args>(args)...);
 }
-
-template <class T, class MA>
-struct managed_storage : private wrapper<T>, private wrapper<MA> {
- public:
-  template <class _MA, class... Args>
-  explicit managed_storage(_MA&& ma, Args&&... args)
-      : wrapper<T>(forward<Args>(args)...), wrapper<MA>(forward<_MA>(ma)) {}
-
-  managed_storage* clone() const {
-    MA ma = wrapper<MA>::get();
-    return make_managed_storage<T>(forward<MA>(ma), wrapper<T>::get());
-  }
-
-  void destroy() {
-    MA ma = wrapper<MA>::get();
-    std::wang::destroy(forward<MA>(ma), this);
-  }
-};
 
 }  // namespace std::wang
 

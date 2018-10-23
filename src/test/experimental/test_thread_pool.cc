@@ -9,7 +9,7 @@
 #include "../../main/experimental/concurrent.h"
 
 int main() {
-  constexpr int task_count = 100000;
+  constexpr std::size_t task_count = 1000000u;
 
   std::thread_pool<> pool(10);
   auto executor = pool.executor();
@@ -17,7 +17,7 @@ int main() {
   std::set<int> s;
   std::promise<void> p;
 
-  for (int i = 0; i < task_count; ++i) {
+  for (std::size_t i = 0u; i < task_count; ++i) {
     executor([&, i] {
       mtx.lock();
       s.insert(i);

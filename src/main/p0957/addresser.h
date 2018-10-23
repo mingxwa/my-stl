@@ -112,15 +112,13 @@ struct value_meta_ext_t {
  public:
   template <class T>
   constexpr explicit value_meta_ext_t(in_place_type_t<T>)
-      : destroy_(destroy_small<T>), copy_(copy_small<T>), type_(type<T>) {}
+      : destroy_(destroy_small<T>), type_(type<T>) {}
 
   template <class T, class MA>
   constexpr explicit value_meta_ext_t(in_place_type_t<T>, in_place_type_t<MA>)
-      : destroy_(destroy_large<T, MA>), copy_(copy_large<T, MA>),
-        type_(type<T>) {}
+      : destroy_(destroy_large<T, MA>), type_(type<T>) {}
 
   void (*destroy_)(value_storage<S, A>*);
-  void (*copy_)(value_storage<S, A>*, value_storage<S, A>*);
   const type_info&(*type_)();
 
  private:
@@ -132,17 +130,6 @@ struct value_meta_ext_t {
   template <class T, class MA>
   static void destroy_large(value_storage<S, A>* erased) {
     static_cast<managed_storage<T, MA>*>(erased->ptr_)->destroy();
-  }
-
-  template <class T>
-  static void copy_small(value_storage<S, A>* src, value_storage<S, A>* dest) {
-    new (reinterpret_cast<T*>(dest->value_))
-        T(*reinterpret_cast<const T*>(src->value_));
-  }
-
-  template <class T, class MA>
-  static void copy_large(value_storage<S, A>* src, value_storage<S, A>* dest) {
-    dest->ptr_ = static_cast<const managed_storage<T, MA>*>(src->ptr_)->clone();
   }
 
   template <class T>
@@ -205,12 +192,6 @@ class value_addresser {
   value_addresser(value_addresser<M, S, A, _C, _V>&& rhs) noexcept
       { move_init(rhs); }
 
-  value_addresser(const value_addresser& rhs) { copy_init(rhs); }
-
-  template <bool _C, bool _V>
-  value_addresser(const value_addresser<M, S, A, _C, _V>& rhs)
-      { copy_init(rhs); }
-
   template <class T, class... Args>
   explicit value_addresser(in_place_type_t<T>, Args&&... args)
       : value_addresser(in_place_type<T>, false_type{},
@@ -253,17 +234,6 @@ class value_addresser {
     return *this;
   }
 
-  value_addresser& operator=(const value_addresser& rhs) {
-    value_addresser(rhs).swap(*this);
-    return *this;
-  }
-
-  template <bool _C, bool _V>
-  value_addresser& operator=(const value_addresser<M, S, A, _C, _V>& rhs) {
-    value_addresser(rhs).swap(*this);
-    return *this;
-  }
-
  private:
   template <class T, class... Args>
   void init_small(Args&&... args) {
@@ -281,15 +251,6 @@ class value_addresser {
   template <class T, class MA, class... Args>
   void init_small_ignore_memory_allocator(MA&&, Args&&... args) {
     init_small<T>(forward<Args>(args)...);
-  }
-
-  template <bool _C, bool _V, class = enable_if_t<!_V>>
-  void copy_init(const value_addresser<M, S, A, _C, _V>& rhs) {
-    if (rhs.meta_ != nullptr) {
-      meta_ = nullptr;  // For exception safety
-      rhs.meta_->ext_.copy_(&rhs.storage_, &storage_);
-      meta_ = rhs.meta_;
-    }
   }
 
   template <bool _C, bool _V, class = enable_if_t<(C || !_C) && (V || !_V)>>
