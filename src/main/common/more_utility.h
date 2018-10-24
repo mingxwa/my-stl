@@ -11,56 +11,31 @@
 namespace std::wang {
 
 template <class T, bool EBO>
-class wrapper_impl : private T {
+class wrapper_impl;
+
+template <class T>
+class wrapper_impl<T, true> : private T {
  public:
-  template <class F, class... Args>
-  explicit wrapper_impl(true_type, F&& f, Args&&... args)
-      : T(invoke(forward<F>(f), forward<Args>(args)...)) {}
-
   template <class... Args>
-  explicit wrapper_impl(false_type, Args&&... args)
-      : T(forward<Args>(args)...) {}
-
-  template <class... Args>
-  explicit wrapper_impl(Args&&... args)
-      : wrapper_impl(false_type{}, forward<Args>(args)...) {}
+  explicit wrapper_impl(Args&&... args) : T(forward<Args>(args)...) {}
 
   wrapper_impl(wrapper_impl&&) = default;
   wrapper_impl(const wrapper_impl&) = default;
 
-  template <class F>
-  void consume(F&& f) const { invoke(forward<F>(f), get()); }
   const T& get() const { return *this; }
-
-  template <class F>
-  void consume(F&& f) { invoke(forward<F>(f), forward<T>(*this)); }
   T&& get() { return forward<T>(*this); }
 };
 
 template <class T>
 class wrapper_impl<T, false> {
  public:
-  template <class F, class... Args>
-  explicit wrapper_impl(true_type, F&& f, Args&&... args)
-      : data_(invoke(forward<F>(f), forward<Args>(args)...)) {}
-
   template <class... Args>
-  explicit wrapper_impl(false_type, Args&&... args)
-      : data_(forward<Args>(args)...) {}
-
-  template <class... Args>
-  explicit wrapper_impl(Args&&... args)
-      : wrapper_impl(false_type{}, forward<Args>(args)...) {}
+  explicit wrapper_impl(Args&&... args) : data_(forward<Args>(args)...) {}
 
   wrapper_impl(wrapper_impl&&) = default;
   wrapper_impl(const wrapper_impl&) = default;
 
-  template <class F>
-  void consume(F&& f) const { invoke(forward<F>(f), get()); }
   const T& get() const { return data_; }
-
-  template <class F>
-  void consume(F&& f) { invoke(forward<F>(f), forward<T>(data_)); }
   T&& get() { return forward<T>(data_); }
 
  private:
@@ -68,21 +43,7 @@ class wrapper_impl<T, false> {
 };
 
 template <>
-class wrapper_impl<void, false> {
- public:
-  template <class F, class... Args>
-  explicit wrapper_impl(true_type, F&& f, Args&&... args)
-      { invoke(forward<F>(f), forward<Args>(args)...); }
-
-  explicit wrapper_impl(false_type = {}) {}
-
-  wrapper_impl(wrapper_impl&&) = default;
-  wrapper_impl(const wrapper_impl&) = default;
-
-  template <class F>
-  void consume(F&& f) const { invoke(forward<F>(f)); }
-  void get() const {}
-};
+class wrapper_impl<void, false> { void get() const {} };
 
 template <class T>
 using wrapper = wrapper_impl<T, !is_final_v<T> && is_empty_v<T>>;
