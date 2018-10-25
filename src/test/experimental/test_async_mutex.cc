@@ -47,7 +47,7 @@ void test_mutex() {
 }
 
 void test_async_mutex() {
-  using mutex = std::async_mutex<decltype(pool.executor())>;
+  using mutex = std::async_mutex<typename std::thread_pool<>::executor_type>;
   test::time_recorder recorder("test_async_mutex");
   std::concurrent_invoker<void> outer_invoker;
   for (std::size_t i = 0; i < TASK_GROUP_COUNT; ++i) {

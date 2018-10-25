@@ -565,6 +565,8 @@ class async_mutex {
 
 template <class F = value_proxy<Callable<void()>>>
 class thread_pool {
+  struct data_type;
+
  public:
   template <class E = thread_executor<>>
   explicit thread_pool(size_t thread_count, const E& executor = E())
@@ -597,15 +599,25 @@ class thread_pool {
     data_->cond_.notify_all();
   }
 
-  auto executor() const {
-    return [&data = *data_](auto&& f) {
+  class executor_type {
+   public:
+    explicit executor_type(data_type* data) : data_(data) {}
+    executor_type(const executor_type&) = default;
+
+    template <class _F>
+    void operator()(_F&& f) const {
       {
-        lock_guard<mutex> lk(data.mtx_);
-        data.tasks_.emplace(forward<decltype(f)>(f));
+        lock_guard<mutex> lk(data_->mtx_);
+        data_->tasks_.emplace(forward<_F>(f));
       }
-      data.cond_.notify_one();
-    };
-  }
+      data_->cond_.notify_one();
+    }
+
+   private:
+    data_type* const data_;
+  };
+
+  executor_type executor() const { return executor_type(data_.get()); }
 
  private:
   struct data_type {
@@ -614,6 +626,7 @@ class thread_pool {
     bool is_shutdown_ = false;
     queue<F> tasks_;
   };
+
   shared_ptr<data_type> data_;
 };
 
@@ -716,33 +729,43 @@ class timed_thread_pool {
     }
   }
 
-  auto executor() const {
-    return [&data = *data_](const chrono::time_point<Clock, Duration>& when,
-                            auto&& f) {
+  class executor_type {
+   public:
+    explicit executor_type(shared_data* data) : data_(data) {}
+    executor_type(const executor_type&) = default;
+
+    template <class _F>
+    void operator()(const chrono::time_point<Clock, Duration>& when, _F&& f)
+        const {
       buffer_data* buffer_ptr;
       {
-        lock_guard<mutex> lk(data.mtx_);
-        if (data.idle_.empty()) {
-          auto it = data.pending_.begin();
-          if (it != data.pending_.end() && when < it->get().task_->when_) {
+        lock_guard<mutex> lk(data_->mtx_);
+        if (data_->idle_.empty()) {
+          auto it = data_->pending_.begin();
+          if (it != data_->pending_.end() && when < it->get().task_->when_) {
             buffer_ptr = &it->get();
-            data.pending_.erase(it);
-            data.tasks_.emplace(*buffer_ptr->task_);
+            data_->pending_.erase(it);
+            data_->tasks_.emplace(*buffer_ptr->task_);
             buffer_ptr->task_.emplace(when, forward<decltype(f)>(f));
-            data.pending_.insert(*buffer_ptr);
+            data_->pending_.insert(*buffer_ptr);
           } else {
-            data.tasks_.emplace(when, forward<decltype(f)>(f));
+            data_->tasks_.emplace(when, forward<decltype(f)>(f));
             return;
           }
         } else {
-          buffer_ptr = &data.idle_.front().get();
-          data.idle_.pop();
+          buffer_ptr = &data_->idle_.front().get();
+          data_->idle_.pop();
           buffer_ptr->task_.emplace(when, forward<decltype(f)>(f));
         }
       }
       buffer_ptr->cond_.notify_one();
-    };
-  }
+    }
+
+   private:
+    shared_data* const data_;
+  };
+
+  executor_type executor() const { return executor_type(data_.get()); }
 
  private:
   struct task_type {
