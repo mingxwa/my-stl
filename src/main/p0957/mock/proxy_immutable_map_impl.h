@@ -17,7 +17,7 @@ struct ImmutableMap;
 
 namespace std {
 
-template <class K, class V, template <bool, bool> class E>
+template <class K, class V, template <qualification> class E>
 struct facade_meta_t<ImmutableMap<K, V>, E> {
   template <class, class>
   friend class proxy;
@@ -32,11 +32,11 @@ struct facade_meta_t<ImmutableMap<K, V>, E> {
 
  private:
   template <class T>
-  static const V& immutable_map_op_0(E<true, false> erased, const K& arg_0) {
+  static const V& immutable_map_op_0(E<qualification::const_qualified> erased, const K& arg_0) {
     return erased.cast(in_place_type<const T>).at(arg_0);
   }
 
-  const V& (*immutable_map_op_0_)(E<true, false>, const K&);
+  const V& (*immutable_map_op_0_)(E<qualification::const_qualified>, const K&);
 };
 
 template <class K, class V, class A>

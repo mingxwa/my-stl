@@ -20,7 +20,7 @@ struct Callable;
 
 namespace std {
 
-template <class R, class... Args, template <bool, bool> class E>
+template <class R, class... Args, template <qualification> class E>
 struct facade_meta_t<Callable<R(Args...)>, E> {
   template <class, class>
   friend class proxy;
@@ -35,14 +35,14 @@ struct facade_meta_t<Callable<R(Args...)>, E> {
 
  private:
   template <class T>
-  static R callable_op_0(E<false, false> erased, Args&&... args) {
+  static R callable_op_0(E<qualification::none> erased, Args&&... args) {
     return erased.cast(in_place_type<T>)(forward<Args>(args)...);
   }
 
-  R (*callable_op_0_)(E<false, false>, Args&&...);
+  R (*callable_op_0_)(E<qualification::none>, Args&&...);
 };
 
-template <class... Args, template <bool, bool> class E>
+template <class... Args, template <qualification> class E>
 struct facade_meta_t<Callable<void(Args...)>, E> {
   template <class, class>
   friend class proxy;
@@ -57,11 +57,11 @@ struct facade_meta_t<Callable<void(Args...)>, E> {
 
  private:
   template <class T>
-  static void callable_op_0(E<false, false> erased, Args&&... args) {
+  static void callable_op_0(E<qualification::none> erased, Args&&... args) {
     erased.cast(in_place_type<T>)(forward<Args>(args)...);
   }
 
-  void (*callable_op_0_)(E<false, false>, Args&&...);
+  void (*callable_op_0_)(E<qualification::none>, Args&&...);
 };
 
 template <class R, class... Args, class A>

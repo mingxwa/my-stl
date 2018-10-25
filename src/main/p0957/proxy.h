@@ -11,7 +11,7 @@
 
 namespace std {
 
-template <class F, template <bool, bool> class> struct facade_meta_t;
+template <class F, template <qualification> class E> struct facade_meta_t;
 template <class F, class A> class proxy;
 
 template <class P>
@@ -25,19 +25,19 @@ inline constexpr null_proxy_t null_proxy {};
 
 template <size_t S, size_t A>
 struct erased_value_adapter {
-  template <bool C, bool V>
-  using type = erased_value<S, A, C, V>;
+  template <qualification Q>
+  using type = erased_value<Q, S, A>;
 };
 
 template <class F, size_t SIZE = sizeof(void*), size_t ALIGN = alignof(void*)>
 using value_proxy = proxy<decay_t<F>, value_addresser<facade_meta_t<decay_t<F>,
-    erased_value_adapter<SIZE, ALIGN>::template type>, SIZE, ALIGN,
-    is_const_v<F>, is_volatile_v<F>>>;
+    erased_value_adapter<SIZE, ALIGN>::template type>, qualification_of_v<F>,
+    SIZE, ALIGN>>;
 
 template <class F>
 using reference_proxy = proxy<decay_t<F>,
     reference_addresser<facade_meta_t<decay_t<F>, erased_reference>,
-    is_const_v<F>, is_volatile_v<F>>>;
+    qualification_of_v<F>>>;
 
 }  // namespace std
 

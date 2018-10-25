@@ -18,7 +18,7 @@ struct DataStream;
 
 namespace std {
 
-template <class V, template <bool, bool> class E>
+template <class V, template <qualification> class E>
 struct facade_meta_t<DataStream<V>, E> {
   template <class, class>
   friend class proxy;
@@ -34,7 +34,7 @@ struct facade_meta_t<DataStream<V>, E> {
 
  private:
   template <class T>
-  static V data_stream_op_0(E<false, false> erased) {
+  static V data_stream_op_0(E<qualification::none> erased) {
     if constexpr(is_void_v<V>) {
       erased.cast(in_place_type<T>).next();
     } else {
@@ -43,12 +43,12 @@ struct facade_meta_t<DataStream<V>, E> {
   }
 
   template <class T>
-  static bool data_stream_op_1(E<true, false> erased) {
+  static bool data_stream_op_1(E<qualification::const_qualified> erased) {
     return erased.cast(in_place_type<const T>).has_next();
   }
 
-  V (*data_stream_op_0_)(E<false, false>);
-  bool (*data_stream_op_1_)(E<true, false>);
+  V (*data_stream_op_0_)(E<qualification::none>);
+  bool (*data_stream_op_1_)(E<qualification::const_qualified>);
 };
 
 template <class V, class A>

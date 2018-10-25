@@ -16,7 +16,7 @@ struct FA;
 
 namespace std {
 
-template <template <bool, bool> class E>
+template <template <qualification> class E>
 struct facade_meta_t<FA, E> {
   template <class, class>
   friend class proxy;
@@ -31,17 +31,17 @@ struct facade_meta_t<FA, E> {
 
  private:
   template <class T>
-  static void fa_op_0(E<false, false> erased) {
+  static void fa_op_0(E<qualification::none> erased) {
     erased.cast(in_place_type<T>).fun_a_0();
   }
 
   template <class T>
-  static int fa_op_1(E<false, false> erased, double&& arg_0) {
+  static int fa_op_1(E<qualification::none> erased, double&& arg_0) {
     return erased.cast(in_place_type<T>).fun_a_1(forward<double>(arg_0));
   }
 
-  void (*fa_op_0_)(E<false, false>);
-  int (*fa_op_1_)(E<false, false>, double&&);
+  void (*fa_op_0_)(E<qualification::none>);
+  int (*fa_op_1_)(E<qualification::none>, double&&);
 };
 
 template <class A>

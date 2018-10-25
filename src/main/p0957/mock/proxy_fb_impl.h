@@ -17,7 +17,7 @@ struct FB;
 
 namespace std {
 
-template <template <bool, bool> class E>
+template <template <qualification> class E>
 struct facade_meta_t<FB, E> {
   template <class, class>
   friend class proxy;
