@@ -212,22 +212,27 @@ class concurrent_token {
   friend class concurrent_invoker;
 
  public:
-  concurrent_token(concurrent_token&& rhs) : context_(rhs.context_)
-      { rhs.context_ = nullptr; }
-
-  ~concurrent_token() {
-    if (context_ != nullptr) {
-      context_->join();
-    }
-  }
+  concurrent_token(concurrent_token&& rhs) { move_init(move(rhs)); }
+  concurrent_token& operator=(concurrent_token&& rhs) { move_init(move(rhs)); }
+  ~concurrent_token() { deinit(); }
 
   add_lvalue_reference_t<const T> context() const { return context_->get(); }
-
   explicit operator bool() const noexcept { return context_; }
 
  private:
   explicit concurrent_token(const concurrent_context<T, CCB>& context)
       : context_(&context) {}
+
+  void move_init(concurrent_token&& rhs) {
+    context_ = rhs.context_;
+    rhs.context_ = nullptr;
+  }
+
+  void deinit() {
+    if (context_ != nullptr) {
+      context_->join();
+    }
+  }
 
   const concurrent_context<T, CCB>* context_;
 };
@@ -238,9 +243,6 @@ enum class concurrent_callable_type { token, context, plain, unknown };
 
 template <class F, class T, class CCB, concurrent_callable_type>
 struct concurrent_callable_invoker;
-
-template <class T, class CCB, bool Extractable>
-struct concurrent_context_extractor;
 
 template <class F, class T, class CCB>
 constexpr concurrent_callable_type get_concurrent_callable_type() {
@@ -288,6 +290,9 @@ void invoke_concurrent_callable(F&& f, concurrent_token<T, CCB>&& t) {
       get_concurrent_callable_type<F, T, CCB>()>::apply(forward<F>(f), move(t));
 }
 
+template <class T, class CCB, bool Extractable>
+struct concurrent_context_extractor;
+
 template <class T, class CCB>
 struct concurrent_context_extractor<T, CCB, true> {
   static inline T apply(concurrent_context<T, CCB>&& c) { return c.get(); }
@@ -304,6 +309,15 @@ auto extract_concurrent_context(concurrent_context<T, CCB>&& c) {
       is_move_constructible_v<T>>::apply(move(c));
 }
 
+template <class R>
+auto make_future_callback(promise<R>&& p) {
+  return [p = move(p)](R&& r) mutable { p.set_value(forward<R>(r)); };
+}
+
+auto make_future_callback(promise<void>&& p) {
+  return [p = move(p)]() mutable { p.set_value(); };
+}
+
 }  // namespace wang
 
 template <class T, class CCB = wang::concurrent_callback_proxy<T>,
@@ -314,6 +328,8 @@ class concurrent_invoker {
   using token = concurrent_token<T, CCB>;
 
  public:
+  using return_type = conditional_t<is_move_constructible_v<T>, T, void>;
+
   template <class... Args>
   explicit concurrent_invoker(Args&&... args)
       : container_(forward<Args>(args)...) {}
@@ -326,8 +342,10 @@ class concurrent_invoker {
   void attach(E&& executor, F&& f) {
     attach([executor = forward<E>(executor), f = forward<F>(f)](token&& t)
         mutable {
-      invoke(forward<E>(executor), [f = forward<F>(f), t = move(t)]() mutable
-          { wang::invoke_concurrent_callable(forward<F>(f), move(t)); });
+      std::invoke(forward<E>(executor), [f = forward<F>(f), t = move(t)]()
+          mutable {
+        wang::invoke_concurrent_callable(forward<F>(f), move(t));
+      });
     });
   }
 
@@ -335,13 +353,13 @@ class concurrent_invoker {
   void attach(_Proc&& proc) { container_.emplace_back(forward<_Proc>(proc)); }
 
   template <class... Args>
-  auto sync_invoke(Args&&... args) {
+  return_type sync_invoke(Args&&... args) {
     binary_semaphore sem;
     return sync_invoke_explicit(sem, forward<Args>(args)...);
   }
 
   template <class BS, class... Args>
-  auto sync_invoke_explicit(BS& semaphore, Args&&... args) {
+  return_type sync_invoke_explicit(BS& semaphore, Args&&... args) {
     context c(container_.size(), make_sync_concurrent_callback(semaphore),
         forward<Args>(args)...);
     call(c);
@@ -378,6 +396,37 @@ class concurrent_invoker {
     t.context_ = nullptr;
   }
 
+  template <class... Args>
+  future<return_type> invoke(Args&&... args) {
+    return invoke_explicit(memory_allocator{}, forward<Args>(args)...);
+  }
+
+  template <class MA, class... Args>
+  future<return_type> invoke_explicit(MA&& ma, Args&&... args) {
+    promise<return_type> p;
+    future<return_type> result = p.get_future();
+    async_invoke_explicit(forward<MA>(ma), wang::make_future_callback(move(p)),
+        forward<Args>(args)...);
+    return result;
+  }
+
+  template <class _T, class _CCB, class... Args>
+  future<return_type> recursive_invoke(concurrent_token<_T, _CCB>&& t,
+      Args&&... args) {
+    recursive_invoke_explicit(memory_allocator{}, move(t),
+        forward<Args>(args)...);
+  }
+
+  template <class MA, class _T, class _CCB, class... Args>
+  future<return_type> recursive_invoke_explicit(MA&& ma,
+      concurrent_token<_T, _CCB>&& t, Args&&... args) {
+    promise<return_type> p;
+    future<return_type> result = p.get_future();
+    recursive_async_invoke_explicit(forward<MA>(ma), move(t),
+        wang::make_future_callback(move(p)), forward<Args>(args)...);
+    return result;
+  }
+
   void fork(token& t) {
     t.context_->fork(container_.size());
     call(t.context_);
@@ -386,7 +435,7 @@ class concurrent_invoker {
  private:
   void call(const context& c) {
     for (Proc& proc : container_) {
-      invoke(forward<Proc>(proc), token(c));
+      std::invoke(forward<Proc>(proc), token(c));
     }
   }
 
@@ -532,7 +581,7 @@ class async_mutex {
       : async_mutex(forward<_E>(executor), MA{}) {}
 
   template <class CS>
-  void attach(CS&& cs) const { attach(forward<CS>(cs), [](auto&&...) {}); }
+  void attach(CS&& cs) const { attach(forward<CS>(cs), [] {}); }
 
   template <class CS, class CB>
   void attach(CS&& cs, CB&& cb) const {

@@ -1,7 +1,7 @@
 # wang
 
 This is the repository of all the ISO C++ proposals I have submitted, together
-with their corresponding implementations.
+with their corresponding implementation.
 
 The organization structure of this repository is as follows:
 
@@ -11,8 +11,8 @@ The organization structure of this repository is as follows:
 
 `./src` is the source root.
 
-`./src/main` contains the implementations the proposals, which are grouped by
-             the related paper numbers.
+`./src/main` contains the implementation of the proposals, which are grouped
+             by the related paper numbers.
 
 `./src/test` contains the test cases that could run with the proposals. Each
              `.cc` file is a standalone compile unit that could run
