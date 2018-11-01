@@ -28,24 +28,21 @@ class concurrent_context : public wang::wrapper<T> {
  public:
   template <class _CCB, class... Args>
   explicit concurrent_context(size_t count, _CCB&& callback, Args&&... args)
-      : wang::wrapper<T>(forward<Args>(args)...),
-        callback_(forward<_CCB>(callback)), count_(count) {}
+      : wang::wrapper<T>(forward<Args>(args)...), count_(count),
+        callback_(forward<_CCB>(callback)) {}
 
-  void fork(size_t count) const {
-    count_.fetch_add(count, memory_order_relaxed);
-  }
+  void fork(size_t count) { count_.fetch_add(count, memory_order_relaxed); }
 
-  void join() const {
+  void join() {
     if (count_.fetch_sub(1u, memory_order_release) == 1u) {
       atomic_thread_fence(memory_order_acquire);
-      concurrent_context* current = const_cast<concurrent_context*>(this);
-      invoke(forward<CCB>(current->callback_), move(*current));
+      invoke(forward<CCB>(callback_), this);
     }
   }
 
  private:
+  atomic_size_t count_;
   CCB callback_;
-  mutable atomic_size_t count_;
 };
 
 class binary_semaphore {
@@ -67,7 +64,7 @@ class sync_concurrent_callback {
   sync_concurrent_callback& operator=(sync_concurrent_callback&&) = default;
 
   template <class T, class CCB>
-  void operator()(concurrent_context<T, CCB>&&) { semaphore_.release(); }
+  void operator()(concurrent_context<T, CCB>*) { semaphore_.release(); }
 
  private:
   BS& semaphore_;
@@ -136,10 +133,10 @@ class async_concurrent_callback : private wang::wrapper<MA>,
   async_concurrent_callback& operator=(async_concurrent_callback&&) = default;
 
   template <class T, class CCB>
-  void operator()(concurrent_context<T, CCB>&& context) {
+  void operator()(concurrent_context<T, CCB>* context) {
     wang::invoke_callback(wang::wrapper<CB>::get(),
-        static_cast<wang::wrapper<T>&&>(context));
-    wang::destroy(wang::wrapper<MA>::get(), &context);
+        static_cast<wang::wrapper<T>&&>(*context));
+    wang::destroy(wang::wrapper<MA>::get(), context);
   }
 };
 
@@ -155,7 +152,7 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
  public:
   template <class _MA, class _CB>
   explicit recursive_async_concurrent_callback(
-      _MA&& ma, const concurrent_context<T, CCB>& host, _CB&& callback)
+      _MA&& ma, concurrent_context<T, CCB>* host, _CB&& callback)
       : wang::wrapper<MA>(forward<_MA>(ma)),
         wang::wrapper<CB>(forward<_CB>(callback)), host_(host) {}
 
@@ -165,21 +162,21 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
       recursive_async_concurrent_callback&&) = default;
 
   template <class _T, class _CCB>
-  void operator()(concurrent_context<_T, _CCB>&& context) {
+  void operator()(concurrent_context<_T, _CCB>* context) {
     wang::invoke_callback(wang::wrapper<CB>::get(),
-        static_cast<wang::wrapper<_T>&&>(context));
-    const concurrent_context<T, CCB>& host = host_;
-    wang::destroy(wang::wrapper<MA>::get(), &context);
-    host.join();
+        static_cast<wang::wrapper<_T>&&>(*context));
+    concurrent_context<T, CCB>* host = host_;
+    wang::destroy(wang::wrapper<MA>::get(), context);
+    host->join();
   }
 
  private:
-  const concurrent_context<T, CCB>& host_;
+  concurrent_context<T, CCB>* host_;
 };
 
 template <class MA, class T, class CCB, class CB>
 auto make_recursive_async_concurrent_callback(MA&& ma,
-    const concurrent_context<T, CCB>& host, CB&& callback) {
+    concurrent_context<T, CCB>* host, CB&& callback) {
   return recursive_async_concurrent_callback<decay_t<MA>, T, CCB, decay_t<CB>>(
     forward<MA>(ma), host, forward<CB>(callback));
 }
@@ -195,10 +192,10 @@ class concurrent_callback_proxy {
   concurrent_callback_proxy(F&& f) : f_(forward<F>(f)) {}
   concurrent_callback_proxy(concurrent_callback_proxy&&) = default;
   concurrent_callback_proxy& operator=(concurrent_callback_proxy&&) = default;
-  void operator()(context&& c) { invoke(move(f_), move(c)); }
+  void operator()(context* c) { invoke(move(f_), c); }
 
  private:
-  value_proxy<Callable<void(context&&)>> f_;
+  value_proxy<Callable<void(context*)>> f_;
 };
 
 }  // namespace wang
@@ -220,8 +217,8 @@ class concurrent_token {
   explicit operator bool() const noexcept { return context_; }
 
  private:
-  explicit concurrent_token(const concurrent_context<T, CCB>& context)
-      : context_(&context) {}
+  explicit concurrent_token(concurrent_context<T, CCB>* context)
+      : context_(context) {}
 
   void move_init(concurrent_token&& rhs) {
     context_ = rhs.context_;
@@ -234,7 +231,7 @@ class concurrent_token {
     }
   }
 
-  const concurrent_context<T, CCB>* context_;
+  concurrent_context<T, CCB>* context_;
 };
 
 namespace wang {
@@ -362,7 +359,7 @@ class concurrent_invoker {
   return_type sync_invoke_explicit(BS& semaphore, Args&&... args) {
     context c(container_.size(), make_sync_concurrent_callback(semaphore),
         forward<Args>(args)...);
-    call(c);
+    call(&c);
     semaphore.acquire();
     return wang::extract_concurrent_context(move(c));
   }
@@ -375,7 +372,7 @@ class concurrent_invoker {
 
   template <class MA, class CB, class... Args>
   void async_invoke_explicit(MA&& ma, CB&& callback, Args&&... args) {
-    call(*wang::construct<context>(forward<MA>(ma), container_.size(),
+    call(wang::construct<context>(forward<MA>(ma), container_.size(),
         make_async_concurrent_callback(ma, forward<CB>(callback)),
         forward<Args>(args)...));
   }
@@ -390,8 +387,8 @@ class concurrent_invoker {
   template <class MA, class _T, class _CCB, class CB, class... Args>
   void recursive_async_invoke_explicit(MA&& ma, concurrent_token<_T, _CCB>&& t,
       CB&& callback, Args&&... args) {
-    call(*wang::construct<context>(forward<MA>(ma), container_.size(),
-        make_recursive_async_concurrent_callback(ma, *t.context_,
+    call(wang::construct<context>(forward<MA>(ma), container_.size(),
+        make_recursive_async_concurrent_callback(ma, t.context_,
         forward<CB>(callback)), forward<Args>(args)...));
     t.context_ = nullptr;
   }
@@ -433,7 +430,7 @@ class concurrent_invoker {
   }
 
  private:
-  void call(const context& c) {
+  void call(context* c) {
     for (Proc& proc : container_) {
       std::invoke(forward<Proc>(proc), token(c));
     }
