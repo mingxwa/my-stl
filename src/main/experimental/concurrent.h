@@ -31,17 +31,20 @@ class concurrent_context : public wang::wrapper<T> {
       : wang::wrapper<T>(forward<Args>(args)...), count_(count),
         callback_(forward<_CCB>(callback)) {}
 
-  void fork(size_t count) { count_.fetch_add(count, memory_order_relaxed); }
+  void fork(size_t count) const {
+    count_.fetch_add(count, memory_order_relaxed);
+  }
 
-  void join() {
+  void join() const {
     if (count_.fetch_sub(1u, memory_order_release) == 1u) {
       atomic_thread_fence(memory_order_acquire);
-      invoke(forward<CCB>(callback_), this);
+      concurrent_context* current = const_cast<concurrent_context*>(this);
+      invoke(forward<CCB>(current->callback_), current);
     }
   }
 
  private:
-  atomic_size_t count_;
+  mutable atomic_size_t count_;
   CCB callback_;
 };
 
@@ -152,7 +155,7 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
  public:
   template <class _MA, class _CB>
   explicit recursive_async_concurrent_callback(
-      _MA&& ma, concurrent_context<T, CCB>* host, _CB&& callback)
+      _MA&& ma, const concurrent_context<T, CCB>* host, _CB&& callback)
       : wang::wrapper<MA>(forward<_MA>(ma)),
         wang::wrapper<CB>(forward<_CB>(callback)), host_(host) {}
 
@@ -165,18 +168,18 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
   void operator()(concurrent_context<_T, _CCB>* context) {
     wang::invoke_callback(wang::wrapper<CB>::get(),
         static_cast<wang::wrapper<_T>&&>(*context));
-    concurrent_context<T, CCB>* host = host_;
+    const concurrent_context<T, CCB>* host = host_;
     wang::destroy(wang::wrapper<MA>::get(), context);
     host->join();
   }
 
  private:
-  concurrent_context<T, CCB>* host_;
+  const concurrent_context<T, CCB>* host_;
 };
 
 template <class MA, class T, class CCB, class CB>
 auto make_recursive_async_concurrent_callback(MA&& ma,
-    concurrent_context<T, CCB>* host, CB&& callback) {
+    const concurrent_context<T, CCB>* host, CB&& callback) {
   return recursive_async_concurrent_callback<decay_t<MA>, T, CCB, decay_t<CB>>(
     forward<MA>(ma), host, forward<CB>(callback));
 }
@@ -217,7 +220,7 @@ class concurrent_token {
   explicit operator bool() const noexcept { return context_; }
 
  private:
-  explicit concurrent_token(concurrent_context<T, CCB>* context)
+  explicit concurrent_token(const concurrent_context<T, CCB>* context)
       : context_(context) {}
 
   void move_init(concurrent_token&& rhs) {
@@ -231,7 +234,7 @@ class concurrent_token {
     }
   }
 
-  concurrent_context<T, CCB>* context_;
+  const concurrent_context<T, CCB>* context_;
 };
 
 namespace wang {
@@ -292,18 +295,18 @@ struct concurrent_context_extractor;
 
 template <class T, class CCB>
 struct concurrent_context_extractor<T, CCB, true> {
-  static inline T apply(concurrent_context<T, CCB>&& c) { return c.get(); }
+  static inline T apply(concurrent_context<T, CCB>* c) { return c->get(); }
 };
 
 template <class T, class CCB>
 struct concurrent_context_extractor<T, CCB, false> {
-  static inline void apply(concurrent_context<T, CCB>&&) {}
+  static inline void apply(concurrent_context<T, CCB>*) {}
 };
 
 template <class T, class CCB>
-auto extract_concurrent_context(concurrent_context<T, CCB>&& c) {
+auto extract_concurrent_context(concurrent_context<T, CCB>* c) {
   concurrent_context_extractor<T, CCB,
-      is_move_constructible_v<T>>::apply(move(c));
+      is_move_constructible_v<T>>::apply(c);
 }
 
 template <class R>
@@ -361,7 +364,7 @@ class concurrent_invoker {
         forward<Args>(args)...);
     call(&c);
     semaphore.acquire();
-    return wang::extract_concurrent_context(move(c));
+    return wang::extract_concurrent_context(&c);
   }
 
   template <class CB, class... Args>
@@ -430,7 +433,7 @@ class concurrent_invoker {
   }
 
  private:
-  void call(context* c) {
+  void call(const context* c) {
     for (Proc& proc : container_) {
       std::invoke(forward<Proc>(proc), token(c));
     }
