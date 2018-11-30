@@ -78,51 +78,6 @@ auto make_sync_concurrent_callback(BS& semaphore) {
   return sync_concurrent_callback<BS>(semaphore);
 }
 
-namespace wang {
-
-enum class callback_type { context, plain, unknown };
-
-template <class F, class T, callback_type>
-struct callback_invoker;
-
-template <class F, class T>
-struct callback_invoker<F, T, callback_type::context> {
-  static inline void apply(F&& f, wrapper<T>&& w)
-      { invoke(forward<F>(f), w.get()); }
-};
-
-template <class F, class T>
-struct callback_invoker<F, T, callback_type::plain> {
-  static inline void apply(F&& f, wrapper<T>&&)
-      { invoke(forward<F>(f)); }
-};
-
-template <class F, class T>
-constexpr callback_type get_callback_type() {
-  if (is_void_v<T>) {
-    return is_invocable_v<F> ? callback_type::plain : callback_type::unknown;
-  }
-  int match_count = 0;
-  callback_type result = callback_type::unknown;
-  if (is_invocable_v<F, add_rvalue_reference_t<T>>) {
-    result = callback_type::context;
-    ++match_count;
-  }
-  if (is_invocable_v<F>) {
-    result = callback_type::plain;
-    ++match_count;
-  }
-  return match_count == 1 ? result : callback_type::unknown;
-}
-
-template <class F, class T>
-void invoke_callback(F&& f, wrapper<T>&& w) {
-  callback_invoker<F, T, get_callback_type<F, T>()>::apply(
-      forward<F>(f), move(w));
-}
-
-}  // namespace wang
-
 template <class MA, class CB>
 class async_concurrent_callback : private wang::wrapper<MA>,
     private wang::wrapper<CB> {
@@ -137,7 +92,7 @@ class async_concurrent_callback : private wang::wrapper<MA>,
 
   template <class T, class CCB>
   void operator()(concurrent_context<T, CCB>* context) {
-    wang::invoke_callback(wang::wrapper<CB>::get(),
+    wang::invoke_contextual(wang::wrapper<CB>::get(),
         static_cast<wang::wrapper<T>&&>(*context));
     wang::destroy(wang::wrapper<MA>::get(), context);
   }
@@ -166,7 +121,7 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
 
   template <class _T, class _CCB>
   void operator()(concurrent_context<_T, _CCB>* context) {
-    wang::invoke_callback(wang::wrapper<CB>::get(),
+    wang::invoke_contextual(wang::wrapper<CB>::get(),
         static_cast<wang::wrapper<_T>&&>(*context));
     const concurrent_context<T, CCB>* host = host_;
     wang::destroy(wang::wrapper<MA>::get(), context);
@@ -216,7 +171,7 @@ class concurrent_token {
   concurrent_token& operator=(concurrent_token&& rhs) { move_init(move(rhs)); }
   ~concurrent_token() { deinit(); }
 
-  add_lvalue_reference_t<const T> context() const { return context_->get(); }
+  add_lvalue_reference_t<const T> get() const { return context_->get(); }
   explicit operator bool() const noexcept { return context_; }
 
  private:
@@ -238,76 +193,6 @@ class concurrent_token {
 };
 
 namespace wang {
-
-enum class concurrent_callable_type { token, context, plain, unknown };
-
-template <class F, class T, class CCB, concurrent_callable_type>
-struct concurrent_callable_invoker;
-
-template <class F, class T, class CCB>
-constexpr concurrent_callable_type get_concurrent_callable_type() {
-  int match_count = 0;
-  concurrent_callable_type result = concurrent_callable_type::unknown;
-  if (is_invocable_v<F, concurrent_token<T, CCB>>) {
-    result = concurrent_callable_type::token;
-    ++match_count;
-  }
-  if (is_invocable_v<F, add_lvalue_reference_t<const T>>) {
-    result = concurrent_callable_type::context;
-    ++match_count;
-  }
-  if (is_invocable_v<F>) {
-    result = concurrent_callable_type::plain;
-    ++match_count;
-  }
-  return match_count == 1 ? result : concurrent_callable_type::unknown;
-}
-
-template <class F, class T, class CCB>
-struct concurrent_callable_invoker<F, T, CCB,
-    concurrent_callable_type::token> {
-  static inline void apply(F&& f, concurrent_token<T, CCB>&& t)
-      { invoke(forward<F>(f), move(t)); }
-};
-
-template <class F, class T, class CCB>
-struct concurrent_callable_invoker<F, T, CCB,
-    concurrent_callable_type::context> {
-  static inline void apply(F&& f, concurrent_token<T, CCB>&& t)
-      { invoke(forward<F>(f), t.context()); }
-};
-
-template <class F, class T, class CCB>
-struct concurrent_callable_invoker<F, T, CCB,
-    concurrent_callable_type::plain> {
-  static inline void apply(F&& f, concurrent_token<T, CCB>&&)
-      { invoke(forward<F>(f)); }
-};
-
-template <class F, class T, class CCB>
-void invoke_concurrent_callable(F&& f, concurrent_token<T, CCB>&& t) {
-  concurrent_callable_invoker<F, T, CCB,
-      get_concurrent_callable_type<F, T, CCB>()>::apply(forward<F>(f), move(t));
-}
-
-template <class T, class CCB, bool Extractable>
-struct concurrent_context_extractor;
-
-template <class T, class CCB>
-struct concurrent_context_extractor<T, CCB, true> {
-  static inline T apply(concurrent_context<T, CCB>* c) { return c->get(); }
-};
-
-template <class T, class CCB>
-struct concurrent_context_extractor<T, CCB, false> {
-  static inline void apply(concurrent_context<T, CCB>*) {}
-};
-
-template <class T, class CCB>
-auto extract_concurrent_context(concurrent_context<T, CCB>* c) {
-  concurrent_context_extractor<T, CCB,
-      is_move_constructible_v<T>>::apply(c);
-}
 
 template <class R>
 auto make_future_callback(promise<R>&& p) {
@@ -339,18 +224,22 @@ class concurrent_invoker {
       : container_(il, forward<Args>(args)...) {}
 
   template <class E, class F>
-  void attach(E&& executor, F&& f) {
-    attach([executor = forward<E>(executor), f = forward<F>(f)](token&& t)
-        mutable {
+  concurrent_invoker&& attach(E&& executor, F&& f) {
+    return attach([executor = forward<E>(executor), f = forward<F>(f)](
+        token&& t) mutable {
       std::invoke(forward<E>(executor), [f = forward<F>(f), t = move(t)]()
           mutable {
-        wang::invoke_concurrent_callable(forward<F>(f), move(t));
+        wang::invoke_contextual(forward<F>(f),
+            *static_cast<const wang::wrapper<T>*>(t.context_));
       });
     });
   }
 
   template <class _Proc>
-  void attach(_Proc&& proc) { container_.emplace_back(forward<_Proc>(proc)); }
+  concurrent_invoker&& attach(_Proc&& proc) {
+    container_.emplace_back(forward<_Proc>(proc));
+    return move(*this);
+  }
 
   template <class... Args>
   return_type sync_invoke(Args&&... args) {
@@ -364,7 +253,7 @@ class concurrent_invoker {
         forward<Args>(args)...);
     call(&c);
     semaphore.acquire();
-    return wang::extract_concurrent_context(&c);
+    return wang::extract_data_from_wrapper(static_cast<wang::wrapper<T>&>(c));
   }
 
   template <class CB, class... Args>
@@ -545,27 +434,6 @@ class async_mutex_procedure_proxy {
   value_proxy<Callable<void(const mutex&)>> f_;
 };
 
-template <class CS, bool ResultVoid>
-struct critical_section_invoker;
-
-template <class CS>
-struct critical_section_invoker<CS, true> {
-  static inline wrapper<void> apply(CS&& cs)
-      { invoke(forward<CS>(cs)); return {}; }
-};
-
-template <class CS>
-struct critical_section_invoker<CS, false> {
-  static inline wrapper<decltype(invoke(declval<CS>()))> apply(CS&& cs)
-      { return invoke(forward<CS>(cs)); }
-};
-
-template <class CS>
-auto invoke_critical_section(CS&& cs) {
-  return critical_section_invoker<CS, is_void_v<
-      decltype(invoke(forward<CS>(cs)))>>::apply(forward<CS>(cs));
-}
-
 }  // namespace wang
 
 template <class E, class MA = memory_allocator,
@@ -589,9 +457,9 @@ class async_mutex {
         const async_mutex& mtx) mutable {
       mtx.executor_([cs = forward<CS>(cs), cb = forward<CB>(cb), &mtx]()
           mutable {
-        auto res = wang::invoke_critical_section(forward<CS>(cs));
+        auto res = wang::make_wrapper_from_callable(forward<CS>(cs));
         mtx.release();
-        wang::invoke_callback(forward<CB>(cb), move(res));
+        wang::invoke_contextual(forward<CB>(cb), res);
       });
     });
     if (pending_.fetch_add(1, memory_order_relaxed) == 0u) {

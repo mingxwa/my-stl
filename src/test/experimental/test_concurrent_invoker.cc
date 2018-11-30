@@ -9,7 +9,7 @@
 int main() {
   std::concurrent_invoker<void> invoker1;
   for (int i = 0; i < 10; ++i) {
-    invoker1.attach(std::thread_executor<>(), [](std::concurrent_token<void>) {
+    invoker1.attach(std::thread_executor<>(), []() {
       std::this_thread::sleep_for(std::chrono::seconds(1));
       puts("Hello World! -- from invoker 1");
       std::this_thread::sleep_for(std::chrono::seconds(1));

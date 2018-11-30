@@ -55,7 +55,7 @@ void test_async_mutex() {
       std::concurrent_invoker<mutex> inner_invoker;
       for (std::size_t j = 0; j < TASK_COUNT_PER_GROUP; ++j) {
         inner_invoker.attach([](std::concurrent_token<mutex>&& token) {
-          token.context().attach([token = move(token)] {
+          token.get().attach([token = move(token)] {
             mock_task_execution();
           });
         });

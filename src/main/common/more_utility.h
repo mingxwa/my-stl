@@ -48,6 +48,92 @@ class wrapper_impl<void, false> { void get() const {} };
 template <class T>
 using wrapper = wrapper_impl<T, !is_final_v<T> && is_empty_v<T>>;
 
+enum class contextual_callable_type { accepts_data, plain, unknown };
+
+template <class F, class T>
+constexpr contextual_callable_type get_contextual_callable_type() {
+  contextual_callable_type result = contextual_callable_type::unknown;
+  if (is_invocable_v<F, T>) {
+    result = contextual_callable_type::accepts_data;
+  }
+  if (is_invocable_v<F>) {
+    if (result != contextual_callable_type::unknown) {
+      return contextual_callable_type::unknown;  // Ambiguous callable
+    }
+    result = contextual_callable_type::plain;
+  }
+  return result;
+}
+
+template <class F, class T, contextual_callable_type>
+struct invoke_contextual_helper;
+
+template <class F, class T>
+struct invoke_contextual_helper<F, T, contextual_callable_type::accepts_data> {
+  static inline void apply(F&& f, wrapper<T>& w)
+      { invoke(forward<F>(f), w.get()); }
+
+  static inline void apply(F&& f, const wrapper<T>& w)
+      { invoke(forward<F>(f), w.get()); }
+};
+
+template <class F, class T>
+struct invoke_contextual_helper<F, T, contextual_callable_type::plain> {
+  static inline void apply(F&& f, const wrapper<T>&)
+      { invoke(forward<F>(f)); }
+};
+
+template <class F, class T>
+void invoke_contextual(F&& f, wrapper<T>& w) {
+  invoke_contextual_helper<F, T, get_contextual_callable_type<F, T>()>::apply(
+      forward<F>(f), w);
+}
+
+template <class F, class T>
+void invoke_contextual(F&& f, const wrapper<T>& w) {
+  invoke_contextual_helper<F, T, get_contextual_callable_type<F,
+      add_lvalue_reference_t<const T>>()>::apply(forward<F>(f), w);
+}
+
+template <class F, bool V>
+struct make_wrapper_from_callable_helper;
+
+template <class F>
+struct make_wrapper_from_callable_helper<F, true> {
+  static inline wrapper<decltype(invoke(declval<F>()))> apply(F&& f)
+      { return invoke(forward<F>(f)); }
+};
+
+template <class F>
+struct make_wrapper_from_callable_helper<F, false> {
+  static inline wrapper<void> apply(F&& f)
+      { invoke(forward<F>(f)); return {}; }
+};
+
+template <class F>
+auto make_wrapper_from_callable(F&& f) {
+  return make_wrapper_from_callable_helper<F, is_move_constructible_v<
+      decltype(invoke(forward<F>(f)))>>::apply(forward<F>(f));
+}
+
+template <class T, bool V>
+struct extract_data_from_wrapper_helper;
+
+template <class T>
+struct extract_data_from_wrapper_helper<T, true> {
+  static inline T apply(wrapper<T>& w) { return w.get(); }
+};
+
+template <class T>
+struct extract_data_from_wrapper_helper<T, false> {
+  static inline void apply(wrapper<T>&) {}
+};
+
+template <class T>
+auto extract_data_from_wrapper(wrapper<T>& w) {
+  extract_data_from_wrapper_helper<T, is_move_constructible_v<T>>::apply(w);
+}
+
 template <class T, class MA, class... Args>
 T* construct(MA&& ma, Args&&... args) {
   T* value = static_cast<T*>(ma.allocate(integral_constant<size_t, sizeof(T)>{},
