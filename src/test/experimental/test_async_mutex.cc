@@ -28,43 +28,44 @@ void test_mutex() {
     mutable std::mutex mtx_;  // Access concurrently
   };
   test::time_recorder recorder("test_mutex");
-  std::concurrent_invoker<void> outer_invoker;
+  std::concurrent_invocation<void> outer_invocation;
   for (std::size_t i = 0; i < TASK_GROUP_COUNT; ++i) {
-    outer_invoker.attach([](std::concurrent_token<void>&& token) {
-      std::concurrent_invoker<context> inner_invoker;
+    outer_invocation.attach([](std::concurrent_breakpoint<void>&& breakpoint) {
+      std::concurrent_invocation<context> inner_invocation;
       for (std::size_t j = 0; j < TASK_COUNT_PER_GROUP; ++j) {
-        inner_invoker.attach(pool.executor(), [](const context& c) {
+        inner_invocation.attach(pool.executor(), [](const context& c) {
           c.mtx_.lock();
           mock_task_execution();
           c.mtx_.unlock();
         });
       }
-      inner_invoker.recursive_async_invoke(std::move(token), [] {});
+      inner_invocation.recursive_async_invoke(std::move(breakpoint), [] {});
     });
   }
-  outer_invoker.sync_invoke();
+  outer_invocation.sync_invoke();
   recorder.record();
 }
 
 void test_async_mutex() {
   using mutex = std::async_mutex<typename std::thread_pool<>::executor_type>;
   test::time_recorder recorder("test_async_mutex");
-  std::concurrent_invoker<void> outer_invoker;
+  std::concurrent_invocation<void> outer_invocation;
   for (std::size_t i = 0; i < TASK_GROUP_COUNT; ++i) {
-    outer_invoker.attach([](std::concurrent_token<void>&& token) {
-      std::concurrent_invoker<mutex> inner_invoker;
+    outer_invocation.attach([](std::concurrent_breakpoint<void>&& breakpoint) {
+      std::concurrent_invocation<mutex> inner_invocation;
       for (std::size_t j = 0; j < TASK_COUNT_PER_GROUP; ++j) {
-        inner_invoker.attach([](std::concurrent_token<mutex>&& token) {
-          token.get().attach([token = move(token)] {
+        inner_invocation.attach([](std::concurrent_breakpoint<mutex>&&
+            breakpoint) {
+          breakpoint.get().attach([breakpoint = move(breakpoint)] {
             mock_task_execution();
           });
         });
       }
-      inner_invoker.recursive_async_invoke(std::move(token), [] {},
+      inner_invocation.recursive_async_invoke(std::move(breakpoint), [] {},
           pool.executor());
     });
   }
-  outer_invoker.sync_invoke();
+  outer_invocation.sync_invoke();
   recorder.record();
 }
 

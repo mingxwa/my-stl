@@ -143,42 +143,43 @@ namespace wang {
 
 template <class T>
 class concurrent_callback_proxy {
-  using context = concurrent_context<T, concurrent_callback_proxy>;
+  using Context = concurrent_context<T, concurrent_callback_proxy>;
 
  public:
   template <class F>
   concurrent_callback_proxy(F&& f) : f_(forward<F>(f)) {}
   concurrent_callback_proxy(concurrent_callback_proxy&&) = default;
   concurrent_callback_proxy& operator=(concurrent_callback_proxy&&) = default;
-  void operator()(context* c) { invoke(move(f_), c); }
+  void operator()(Context* context_ptr) { invoke(move(f_), context_ptr); }
 
  private:
-  value_proxy<Callable<void(context*)>> f_;
+  value_proxy<Callable<void(Context*)>> f_;
 };
 
 }  // namespace wang
 
 template <class, class, class, class>
-class concurrent_invoker;
+class concurrent_invocation;
 
 template <class T, class CCB = wang::concurrent_callback_proxy<T>>
-class concurrent_token {
+class concurrent_breakpoint {
   template <class, class, class, class>
-  friend class concurrent_invoker;
+  friend class concurrent_invocation;
 
  public:
-  concurrent_token(concurrent_token&& rhs) { move_init(move(rhs)); }
-  concurrent_token& operator=(concurrent_token&& rhs) { move_init(move(rhs)); }
-  ~concurrent_token() { deinit(); }
+  concurrent_breakpoint(concurrent_breakpoint&& rhs) { move_init(move(rhs)); }
+  concurrent_breakpoint& operator=(concurrent_breakpoint&& rhs)
+      { move_init(move(rhs)); return *this; }
+  ~concurrent_breakpoint() { deinit(); }
 
   add_lvalue_reference_t<const T> get() const { return context_->get(); }
   explicit operator bool() const noexcept { return context_; }
 
  private:
-  explicit concurrent_token(const concurrent_context<T, CCB>* context)
+  explicit concurrent_breakpoint(const concurrent_context<T, CCB>* context)
       : context_(context) {}
 
-  void move_init(concurrent_token&& rhs) {
+  void move_init(concurrent_breakpoint&& rhs) {
     context_ = rhs.context_;
     rhs.context_ = nullptr;
   }
@@ -206,37 +207,37 @@ auto make_future_callback(promise<void>&& p) {
 }  // namespace wang
 
 template <class T, class CCB = wang::concurrent_callback_proxy<T>,
-    class Proc = value_proxy<Callable<void(concurrent_token<T, CCB>)>>,
+    class Proc = value_proxy<Callable<void(concurrent_breakpoint<T, CCB>)>>,
     class Container = vector<Proc>>
-class concurrent_invoker {
-  using context = concurrent_context<T, CCB>;
-  using token = concurrent_token<T, CCB>;
+class concurrent_invocation {
+  using Context = concurrent_context<T, CCB>;
+  using Breakpoint = concurrent_breakpoint<T, CCB>;
 
  public:
   using return_type = conditional_t<is_move_constructible_v<T>, T, void>;
 
   template <class... Args>
-  explicit concurrent_invoker(Args&&... args)
+  explicit concurrent_invocation(Args&&... args)
       : container_(forward<Args>(args)...) {}
 
   template <class U, class... Args>
-  explicit concurrent_invoker(initializer_list<U> il, Args&&... args)
+  explicit concurrent_invocation(initializer_list<U> il, Args&&... args)
       : container_(il, forward<Args>(args)...) {}
 
   template <class E, class F>
-  concurrent_invoker&& attach(E&& executor, F&& f) {
+  concurrent_invocation&& attach(E&& executor, F&& f) {
     return attach([executor = forward<E>(executor), f = forward<F>(f)](
-        token&& t) mutable {
-      std::invoke(forward<E>(executor), [f = forward<F>(f), t = move(t)]()
-          mutable {
+        Breakpoint&& breakpoint) mutable {
+      std::invoke(forward<E>(executor), [f = forward<F>(f),
+          breakpoint = move(breakpoint)]() mutable {
         wang::invoke_contextual(forward<F>(f),
-            *static_cast<const wang::wrapper<T>*>(t.context_));
+            *static_cast<const wang::wrapper<T>*>(breakpoint.context_));
       });
     });
   }
 
   template <class _Proc>
-  concurrent_invoker&& attach(_Proc&& proc) {
+  concurrent_invocation&& attach(_Proc&& proc) {
     container_.emplace_back(forward<_Proc>(proc));
     return move(*this);
   }
@@ -249,11 +250,12 @@ class concurrent_invoker {
 
   template <class BS, class... Args>
   return_type sync_invoke_explicit(BS& semaphore, Args&&... args) {
-    context c(container_.size(), make_sync_concurrent_callback(semaphore),
+    Context context(container_.size(), make_sync_concurrent_callback(semaphore),
         forward<Args>(args)...);
-    call(&c);
+    call(&context);
     semaphore.acquire();
-    return wang::extract_data_from_wrapper(static_cast<wang::wrapper<T>&>(c));
+    return wang::extract_data_from_wrapper(
+        static_cast<wang::wrapper<T>&>(context));
   }
 
   template <class CB, class... Args>
@@ -264,25 +266,26 @@ class concurrent_invoker {
 
   template <class MA, class CB, class... Args>
   void async_invoke_explicit(MA&& ma, CB&& callback, Args&&... args) {
-    call(wang::construct<context>(forward<MA>(ma), container_.size(),
+    call(wang::construct<Context>(forward<MA>(ma), container_.size(),
         make_async_concurrent_callback(ma, forward<CB>(callback)),
         forward<Args>(args)...));
   }
 
   template <class _T, class _CCB, class CB, class... Args>
-  void recursive_async_invoke(concurrent_token<_T, _CCB>&& t, CB&& callback,
-      Args&&... args) {
-    recursive_async_invoke_explicit(memory_allocator{}, move(t),
+  void recursive_async_invoke(concurrent_breakpoint<_T, _CCB>&& breakpoint,
+      CB&& callback, Args&&... args) {
+    recursive_async_invoke_explicit(memory_allocator{}, move(breakpoint),
         forward<CB>(callback), forward<Args>(args)...);
   }
 
   template <class MA, class _T, class _CCB, class CB, class... Args>
-  void recursive_async_invoke_explicit(MA&& ma, concurrent_token<_T, _CCB>&& t,
-      CB&& callback, Args&&... args) {
-    call(wang::construct<context>(forward<MA>(ma), container_.size(),
-        make_recursive_async_concurrent_callback(ma, t.context_,
+  void recursive_async_invoke_explicit(MA&& ma,
+      concurrent_breakpoint<_T, _CCB>&& breakpoint, CB&& callback,
+      Args&&... args) {
+    call(wang::construct<Context>(forward<MA>(ma), container_.size(),
+        make_recursive_async_concurrent_callback(ma, breakpoint.context_,
         forward<CB>(callback)), forward<Args>(args)...));
-    t.context_ = nullptr;
+    breakpoint.context_ = nullptr;
   }
 
   template <class... Args>
@@ -300,31 +303,31 @@ class concurrent_invoker {
   }
 
   template <class _T, class _CCB, class... Args>
-  future<return_type> recursive_invoke(concurrent_token<_T, _CCB>&& t,
-      Args&&... args) {
-    recursive_invoke_explicit(memory_allocator{}, move(t),
+  future<return_type> recursive_invoke(
+      concurrent_breakpoint<_T, _CCB>&& breakpoint, Args&&... args) {
+    recursive_invoke_explicit(memory_allocator{}, move(breakpoint),
         forward<Args>(args)...);
   }
 
   template <class MA, class _T, class _CCB, class... Args>
   future<return_type> recursive_invoke_explicit(MA&& ma,
-      concurrent_token<_T, _CCB>&& t, Args&&... args) {
+      concurrent_breakpoint<_T, _CCB>&& breakpoint, Args&&... args) {
     promise<return_type> p;
     future<return_type> result = p.get_future();
-    recursive_async_invoke_explicit(forward<MA>(ma), move(t),
+    recursive_async_invoke_explicit(forward<MA>(ma), move(breakpoint),
         wang::make_future_callback(move(p)), forward<Args>(args)...);
     return result;
   }
 
-  void fork(token& t) {
-    t.context_->fork(container_.size());
-    call(t.context_);
+  void fork(Breakpoint& breakpoint) {
+    breakpoint.context_->fork(container_.size());
+    call(breakpoint.context_);
   }
 
  private:
-  void call(const context* c) {
+  void call(const Context* context_ptr) {
     for (Proc& proc : container_) {
-      std::invoke(forward<Proc>(proc), token(c));
+      std::invoke(forward<Proc>(proc), Breakpoint(context_ptr));
     }
   }
 
@@ -394,8 +397,7 @@ class mutex_queue : private wang::wrapper<MA> {
 
 }  // namespace wang
 
-template <bool DAEMON = false>
-struct thread_executor {
+struct crucial_thread_executor {
   template <class F>
   void operator()(F&& f) const {
     static wang::thread_hub hub;
@@ -407,8 +409,7 @@ struct thread_executor {
   }
 };
 
-template <>
-struct thread_executor<true> {
+struct daemon_thread_executor {
   template <class F>
   void operator()(F&& f) const { thread(forward<F>(f)).detach(); }
 };
@@ -485,7 +486,7 @@ class thread_pool {
   struct data_type;
 
  public:
-  template <class E = thread_executor<>>
+  template <class E = crucial_thread_executor>
   explicit thread_pool(size_t thread_count, const E& executor = E())
       : data_(make_shared<data_type>()) {
     for (size_t i = 0; i < thread_count; ++i) {
@@ -551,7 +552,7 @@ namespace wang {
 
 template <class Clock, class Duration>
 class timed_task_proxy {
-  using return_type = optional<pair<chrono::time_point<Clock, Duration>,
+  using R = optional<pair<chrono::time_point<Clock, Duration>,
       timed_task_proxy>>;
 
  public:
@@ -559,10 +560,10 @@ class timed_task_proxy {
   timed_task_proxy(F&& f) : f_(forward<F>(f)) {}
   timed_task_proxy(timed_task_proxy&&) = default;
   timed_task_proxy& operator=(timed_task_proxy&&) = default;
-  return_type operator()() { return invoke(move(f_)); }
+  R operator()() { return invoke(move(f_)); }
 
  private:
-  value_proxy<Callable<return_type()>> f_;
+  value_proxy<Callable<R()>> f_;
 };
 
 }  // namespace wang
@@ -576,7 +577,7 @@ class timed_thread_pool {
   struct task_type;
 
  public:
-  template <class E = thread_executor<>>
+  template <class E = crucial_thread_executor>
   explicit timed_thread_pool(size_t count,
                              const E& executor = E())
       : data_(make_shared<shared_data>(count)) {
