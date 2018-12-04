@@ -131,7 +131,8 @@ struct extract_data_from_wrapper_helper<T, false> {
 
 template <class T>
 auto extract_data_from_wrapper(wrapper<T>& w) {
-  extract_data_from_wrapper_helper<T, is_move_constructible_v<T>>::apply(w);
+  return extract_data_from_wrapper_helper<T, is_move_constructible_v<T>>
+      ::apply(w);
 }
 
 template <class T, class MA, class... Args>

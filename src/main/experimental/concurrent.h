@@ -92,8 +92,7 @@ class async_concurrent_callback : private wang::wrapper<MA>,
 
   template <class T, class CCB>
   void operator()(concurrent_context<T, CCB>* context) {
-    wang::invoke_contextual(wang::wrapper<CB>::get(),
-        static_cast<wang::wrapper<T>&&>(*context));
+    wang::invoke_contextual(wang::wrapper<CB>::get(), *context);
     wang::destroy(wang::wrapper<MA>::get(), context);
   }
 };
@@ -109,8 +108,8 @@ class recursive_async_concurrent_callback : private wang::wrapper<MA>,
     private wang::wrapper<CB> {
  public:
   template <class _MA, class _CB>
-  explicit recursive_async_concurrent_callback(
-      _MA&& ma, const concurrent_context<T, CCB>* host, _CB&& callback)
+  explicit recursive_async_concurrent_callback(_MA&& ma,
+      const concurrent_context<T, CCB>* host, _CB&& callback)
       : wang::wrapper<MA>(forward<_MA>(ma)),
         wang::wrapper<CB>(forward<_CB>(callback)), host_(host) {}
 
@@ -254,8 +253,7 @@ class concurrent_invocation {
         forward<Args>(args)...);
     call(&context);
     semaphore.acquire();
-    return wang::extract_data_from_wrapper(
-        static_cast<wang::wrapper<T>&>(context));
+    return wang::extract_data_from_wrapper(context);
   }
 
   template <class CB, class... Args>
