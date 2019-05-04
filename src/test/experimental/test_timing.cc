@@ -1,13 +1,13 @@
 /**
- * Copyright (c) 2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #include <cstdio>
 #include <iostream>
 
-#include "../../main/experimental/concurrent.h"
+#include "../../main/experimental/timing.h"
 
-std::timed_thread_pool<> pool(10);
+std::timing_thread_pool<> pool(10);
 std::atomic_int task_count = 3;
 
 int main() {

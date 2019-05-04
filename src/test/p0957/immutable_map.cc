@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #include <map>
@@ -11,7 +11,8 @@
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_immutable_map_impl.h"
 
-void do_something_with_map(std::reference_proxy<const ImmutableMap<int, std::string>> m) {
+void do_something_with_map(std::reference_proxy<
+    const ImmutableMap<int, std::string>> m) {
   try {
     std::cout << m.at(1) << std::endl;
   } catch (const std::out_of_range& e) {

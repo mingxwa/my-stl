@@ -1,9 +1,9 @@
 /**
- * Copyright (c) 2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
-#ifndef SRC_TEST_COMMON_TEST_UTILITY_H_
-#define SRC_TEST_COMMON_TEST_UTILITY_H_
+#ifndef SRC_TEST_TEST_UTILITY_H_
+#define SRC_TEST_TEST_UTILITY_H_
 
 #include <cstdio>
 #include <chrono>
@@ -35,4 +35,4 @@ class time_recorder {
 
 }  // namespace test
 
-#endif  // SRC_TEST_COMMON_TEST_UTILITY_H_
+#endif  // SRC_TEST_TEST_UTILITY_H_

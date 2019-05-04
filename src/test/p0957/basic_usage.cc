@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #include <iostream>
@@ -46,7 +46,7 @@ class FaDemo1 {
     return -1;
   }
 
-  int fun_a_1(float x) {
+  int fun_a_1(double x) {
     puts("FaDemo1: fun_a_0 called");
     printf("Input: %f\n", x);
     printf("Check: %d\n\n", num_);
@@ -115,6 +115,8 @@ int main() {
   // FcDemo1::fun_a_0() is called.
   p1.fun_a_0();
 
+  p1 = aid::make_extended_construction<FcDemo1>(7);
+
   // FcDemo1::fun_a_1(double) is called.
   p1.fun_a_1(1.5);
 
@@ -130,7 +132,7 @@ int main() {
   // FcDemo1::fun_b(value_proxy<FA>) is called
   p2.fun_b(FaDemo1 {456});
 
-  p1.emplace<FcDemo1>(23);
+  p1 = aid::make_extended_construction<FcDemo1>(23);
 
   p1.fun_a_0();
 

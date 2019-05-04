@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #ifndef SRC_MAIN_P0957_ADDRESSER_H_
@@ -7,75 +7,82 @@
 
 #include <typeinfo>
 #include <utility>
+#include <initializer_list>
 
 #include "../p1144/trivially_relocatable.h"
 #include "../p1172/memory_allocator.h"
 #include "../common/more_utility.h"
-#include "../experimental/more_type_traits.h"
+#include "./more_type_traits.h"
 
 namespace std {
 
-namespace wang {
+struct delegated_tag_t { explicit delegated_tag_t() = default; };
+inline constexpr delegated_tag_t delegated_tag{};
+
+namespace detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
-inline constexpr bool VALUE_USES_SBO = sizeof(T) <= SIZE
-    && alignof(T) <= ALIGN && is_trivially_relocatable_v<T>;
+inline constexpr bool VALUE_USES_SBO = sizeof(aid::extended<T>) <= SIZE
+    && alignof(aid::extended<T>) <= ALIGN && is_trivially_relocatable_v<T>;
 
-template <size_t SIZE, size_t ALIAS>
+template <class T, class MA>
+struct managed_storage : aid::extended<T> {
+ public:
+  template <class _T>
+  explicit managed_storage(_T&& value, aid::extended<MA>&& ma)
+      : aid::extended<T>(forward<_T>(value)), ma_(move(ma)) {}
+
+  aid::extended<MA> ma_;
+};
+
+template <size_t SIZE, size_t ALIGN>
 union value_storage {
-  alignas(ALIAS) char value_[SIZE];
+  aligned_storage_t<SIZE, ALIGN> value_;
   void* ptr_;
 };
 
-}  // namespace wang
-
-template <qualification Q>
-class erased_reference {
-  template <qualification>
-  friend class erased_reference;
-
+template <qualification_type Q, reference_type R, class = enable_if_t<
+    R != reference_type::rvalue>>
+struct erased_reference_impl {
  public:
-  erased_reference(const erased_reference&) = default;
-  template <qualification _Q>
-  erased_reference(const erased_reference<_Q>& rhs) : ptr_(rhs.ptr_) {}
-  explicit erased_reference(add_qualification_t<void, Q>* ptr) : ptr_(ptr) {}
+  erased_reference_impl(add_qualification_t<void, Q>* p) : p_(p) {}
 
   template <class T>
-  T& cast(in_place_type_t<T>) { return *static_cast<T*>(ptr_); }
+  add_qualification_t<T, Q>& cast() const
+      { return *static_cast<add_qualification_t<T, Q>*>(p_); }
 
  private:
-  add_qualification_t<void, Q>* ptr_;
+  add_qualification_t<void, Q>* p_;
 };
 
-template <qualification Q, size_t S, size_t A>
-class erased_value {
-  template <qualification, size_t, size_t>
-  friend class erased_value;
+}  // namespace detail
 
- public:
-  erased_value(const erased_value&) = default;
-  template <qualification _Q>
-  erased_value(const erased_value<_Q, S, A>& rhs)
-      : storage_(rhs.storage_) {}
-  explicit erased_value(add_qualification_t<wang::value_storage<S, A>, Q>&
-      storage) : storage_(storage) {}
+template <qualification_type Q, reference_type R>
+using erased_reference = detail::erased_reference_impl<Q, R>;
+
+template <qualification_type Q, reference_type R, size_t SIZE, size_t ALIGN>
+struct erased_value {
+  template <class T, class = enable_if_t<R == reference_type::none
+      || (is_lvalue_reference_v<T> == (R == reference_type::lvalue))>>
+  erased_value(T&& storage) : storage_(&storage) {}
 
   template <class T>
-  T& cast(in_place_type_t<T>) {
+  decltype(auto) cast() const {
+    using U = add_qualification_t<aid::extended<T>, Q>;
     add_qualification_t<void, Q>* p;
-    if constexpr (wang::VALUE_USES_SBO<T, S, A>) {
-      p = storage_.value_;
+    if constexpr (detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
+      p = &storage_->value_;
     } else {
-      p = storage_.ptr_;
+      p = storage_->ptr_;
     }
-    return *static_cast<T*>(p);
+    return forward<conditional_t<R == reference_type::rvalue, U&&, U&>>(
+        *static_cast<U*>(p)).get();
   }
 
- private:
-  add_qualification_t<wang::value_storage<S, A>, Q>& storage_;
+  add_qualification_t<detail::value_storage<SIZE, ALIGN>, Q>* storage_;
 };
 
-namespace wang {
+namespace detail {
 
 template <class M, class... T>
 inline constexpr M META_STORAGE{in_place_type<T>...};
@@ -92,199 +99,174 @@ struct reference_meta<M, false> {
     template <class T>
     explicit type(in_place_type_t<T>) { ptr_ = &META_STORAGE<M, T>; }
 
+    type& operator=(const type&) = default;
+
     operator const M&() const { return *ptr_; }
 
     const M* ptr_;
   };
 };
 
-template <size_t S, size_t A>
-struct value_meta_ext_t {
- public:
+template <class T>
+void destroy_small_value(void* erased) {
+  using U = aid::extended<T>;
+  static_cast<U*>(erased)->~U();
+}
+
+template <class T, class MA>
+void destroy_large_value(void* erased) {
+  detail::managed_storage<T, MA>* p =
+      *static_cast<detail::managed_storage<T, MA>**>(erased);
+  aid::extended<MA> ma = move(p->ma_);
+  aid::destroy(move(ma).get(), p);
+}
+
+template <class T>
+const type_info& get_type() { return typeid(T); }
+
+template <class M>
+struct value_meta {
   template <class T>
-  constexpr explicit value_meta_ext_t(in_place_type_t<T>)
-      : destroy_(destroy_small<T>), type_(type<T>) {}
+  constexpr explicit value_meta(in_place_type_t<T>)
+      : core_(in_place_type<T>), destroy_(destroy_small_value<T>),
+        type_(get_type<T>) {}
 
   template <class T, class MA>
-  constexpr explicit value_meta_ext_t(in_place_type_t<T>, in_place_type_t<MA>)
-      : destroy_(destroy_large<T, MA>), type_(type<T>) {}
-
-  void (*destroy_)(value_storage<S, A>*);
-  const type_info&(*type_)();
-
- private:
-  template <class T>
-  static void destroy_small(value_storage<S, A>* erased) {
-    reinterpret_cast<T*>(erased->value_)->~T();
-  }
-
-  template <class T, class MA>
-  static void destroy_large(value_storage<S, A>* erased) {
-    static_cast<managed_storage<T, MA>*>(erased->ptr_)->destroy();
-  }
-
-  template <class T>
-  static const type_info& type() { return typeid(T); }
-};
-
-template <class M, size_t S, size_t A>
-struct value_meta_t {
-  template <class T, class... O>
-  constexpr explicit value_meta_t(in_place_type_t<T>, in_place_type_t<O>...)
-      : core_(in_place_type<T>), ext_(in_place_type<T>, in_place_type<O>...) {}
+  constexpr explicit value_meta(in_place_type_t<T>, in_place_type_t<MA>)
+      : core_(in_place_type<T>), destroy_(destroy_large_value<T, MA>),
+        type_(get_type<T>) {}
 
   M core_;
-  value_meta_ext_t<S, A> ext_;
+  void (*destroy_)(void*);
+  const type_info&(*type_)();
 };
 
-}  // namespace wang
+}  // namespace detail
 
-template <class M, qualification Q, size_t S, size_t A>
+template <class M, size_t SIZE, size_t ALIGN>
 class value_addresser {
-  template <class, qualification, size_t, size_t>
-  friend class value_addresser;
-
  public:
-  void reset() noexcept { value_addresser().swap(*this); }
+  value_addresser(value_addresser&& rhs) noexcept {
+    meta_ = rhs.meta_;
+    storage_ = rhs.storage_;
+    rhs.meta_ = nullptr;
+  }
+
+  explicit value_addresser(delegated_tag_t) noexcept : meta_(nullptr) {}
 
   template <class T>
-  void reset(T&& val) {
-    value_addresser(in_place_type<decay_t<T>>, forward<T>(val)).swap(*this);
-  }
-
-  template <class T, class U, class... Args>
-  add_qualification_t<T, Q>& emplace(initializer_list<U> il, Args&&... args) {
-    return emplace<T>(il, forward<Args>(args)...);
-  }
-
-  template <class T, class... Args>
-  add_qualification_t<T, Q>& emplace(Args&&... args) {
-    reset();
-    value_addresser(in_place_type<T>, forward<Args>(args)...).swap(*this);
-    return data().cast(in_place_type<add_qualification_t<T, Q>>);
-  }
-
-  const M& meta() const { return meta_->core_; }
-  auto data() const { return erased_value<Q, S, A>{storage_}; }
-
-  bool has_value() const noexcept { return meta_ != nullptr; }
-  const type_info& type() const noexcept { return meta_ == nullptr ?
-      typeid(void) : meta_->ext_.type_(); }
-
-  void swap(value_addresser& rhs) noexcept
-      { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
-
- protected:
-  constexpr value_addresser() noexcept : meta_(nullptr) {}
-
-  value_addresser(value_addresser&& rhs) noexcept { move_init(rhs); }
-
-  template <qualification _Q>
-  value_addresser(value_addresser<M, _Q, S, A>&& rhs) noexcept
-      { move_init(rhs); }
-
-  template <class T, class... Args>
-  explicit value_addresser(in_place_type_t<T>, Args&&... args)
-      : value_addresser(in_place_type<T>, false_type{},
-                        forward<Args>(args)...) {}
-
-  template <class T, bool MEMORY_ALLOCATOR_ENABLED, class... Args,
-            class = enable_if_t<is_same_v<T, decay_t<T>>>>
-  explicit value_addresser(in_place_type_t<T>,
-      bool_constant<MEMORY_ALLOCATOR_ENABLED>, Args&&... args) {
-    if constexpr (!is_nothrow_constructible_v<T>) {
-      meta_ = nullptr;  // For exception safety
-    }
-    if constexpr (wang::VALUE_USES_SBO<T, S, A>) {
-      if constexpr (MEMORY_ALLOCATOR_ENABLED) {
-        init_small_ignore_memory_allocator<T>(forward<Args>(args)...);
-      } else {
-        init_small<T>(forward<Args>(args)...);
-      }
+  explicit value_addresser(delegated_tag_t, T&& value)
+      : value_addresser(delegated_tag) {
+    if constexpr (detail::VALUE_USES_SBO<
+        aid::constructed_extended_t<T>, SIZE, ALIGN>) {
+      init_small(forward<T>(value));
     } else {
-      if constexpr (MEMORY_ALLOCATOR_ENABLED) {
-        init_large<T>(forward<Args>(args)...);
-      } else {
-        init_large<T>(memory_allocator{}, forward<Args>(args)...);
-      }
+      init_large(forward<T>(value), memory_allocator{});
+    }
+  }
+
+  template <class T, class MA>
+  explicit value_addresser(delegated_tag_t, T&& value, MA&& ma)
+      : value_addresser(delegated_tag) {
+    if constexpr (detail::VALUE_USES_SBO<
+        aid::constructed_extended_t<T>, SIZE, ALIGN>) {
+      init_small(forward<T>(value));
+    } else {
+      init_large(forward<T>(value), forward<MA>(ma));
     }
   }
 
   ~value_addresser() {
     if (meta_ != nullptr) {
-      meta_->ext_.destroy_(&storage_);
+      meta_->destroy_(&storage_);
     }
   }
 
   value_addresser& operator=(value_addresser&& rhs) noexcept
       { swap(rhs); return *this; }
 
-  template <qualification _Q>
-  value_addresser& operator=(value_addresser<M, _Q, S, A>&& rhs) {
-    value_addresser(move(rhs)).swap(*this);
-    return *this;
+  const M& meta() const { return meta_->core_; }
+  decltype(auto) data() & { return storage_; }
+  decltype(auto) data() && { return move(storage_); }
+  decltype(auto) data() const& { return storage_; }
+  decltype(auto) data() const&& { return move(storage_); }
+
+  bool has_value() const noexcept { return meta_ != nullptr; }
+  const type_info& type() const noexcept { return meta_ == nullptr ?
+      typeid(void) : meta_->type_(); }
+
+  void reset() noexcept { value_addresser(delegated_tag).swap(*this); }
+
+  template <class T>
+  void assign(T&& val) {
+    value_addresser(delegated_tag, forward<T>(val)).swap(*this);
   }
+
+  template <class T, class MA>
+  void assign(T&& val, MA&& ma) {
+    value_addresser(delegated_tag, forward<T>(val), forward<MA>(ma))
+        .swap(*this);
+  }
+
+  void swap(value_addresser& rhs) noexcept
+      { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
 
  private:
-  template <class T, class... Args>
-  void init_small(Args&&... args) {
-    new (reinterpret_cast<T*>(storage_.value_)) T(forward<Args>(args)...);
-    meta_ = &wang::META_STORAGE<wang::value_meta_t<M, S, A>, T>;
+  template <class T>
+  void init_small(T&& value) {
+    using CET = aid::constructed_extended_t<T>;
+    new(&storage_.value_) aid::extended<CET>(aid::forward_extended<T>(value));
+    meta_ = &detail::META_STORAGE<detail::value_meta<M>, CET>;
   }
 
-  template <class T, class MA, class... Args>
-  void init_large(MA&& ma, Args&&... args) {
-    storage_.ptr_ = wang::make_managed_storage<T>(
-        forward<MA>(ma), std::forward<Args>(args)...);
-    meta_ = &wang::META_STORAGE<wang::value_meta_t<M, S, A>, T, decay_t<MA>>;
+  template <class T, class MA>
+  void init_large(T&& value, MA&& ma) {
+    using CET = aid::constructed_extended_t<T>;
+    using CEMA = aid::constructed_extended_t<MA>;
+    aid::extended<CEMA> ema{aid::forward_extended<MA>(ma)};
+    storage_.ptr_ = aid::construct<detail::managed_storage<CET, CEMA>>(
+        ema.get(), aid::forward_extended<T>(value), move(ema));
+    meta_ = &detail::META_STORAGE<detail::value_meta<M>, CET, CEMA>;
   }
 
-  template <class T, class MA, class... Args>
-  void init_small_ignore_memory_allocator(MA&&, Args&&... args) {
-    init_small<T>(forward<Args>(args)...);
-  }
-
-  template <qualification _Q,
-      class = enable_if_t<is_qualification_convertible_v<_Q, Q>>>
-  void move_init(value_addresser<M, _Q, S, A>& rhs) {
-    meta_ = rhs.meta_;
-    storage_ = rhs.storage_;
-    rhs.meta_ = nullptr;
-  }
-
-  const wang::value_meta_t<M, S, A>* meta_;
-  mutable wang::value_storage<S, A> storage_;
+  const detail::value_meta<M>* meta_;
+  detail::value_storage<SIZE, ALIGN> storage_;
 };
 
-template <class M, qualification Q>
+template <class M, qualification_type Q>
 class reference_addresser {
-  template <class, qualification>
+  template <class, qualification_type>
   friend class reference_addresser;
 
  public:
-  const M& meta() const { return meta_; }
-  auto data() const { return erased_reference<Q>{ptr_}; }
-
- protected:
   reference_addresser(const reference_addresser&) noexcept = default;
 
-  template <class _M, qualification _Q>
+  template <class _M, qualification_type _Q>
   reference_addresser(const reference_addresser<_M, _Q>& rhs) noexcept
       : meta_(rhs.meta_), ptr_(rhs.ptr_) {}
 
-  template <class T, class U, class = enable_if_t<is_same_v<T, decay_t<T>>>>
-  explicit reference_addresser(in_place_type_t<T>, U& value) noexcept
-      : meta_(in_place_type<T>), ptr_(&value) {}
+  template <class T>
+  explicit reference_addresser(delegated_tag_t, T& value) noexcept
+      : meta_(in_place_type<decay_t<T>>), ptr_(&value) {}
 
   reference_addresser& operator=(const reference_addresser& rhs)
       noexcept = default;
 
-  template <class _M, qualification _Q>
+  template <class _M, qualification_type _Q>
   reference_addresser& operator=(const reference_addresser<_M, _Q>& rhs)
-      noexcept { meta_ = rhs.meta_; ptr_ = rhs.ptr_; }
+      noexcept { meta_ = rhs.meta(); ptr_ = rhs.ptr_; return *this; }
+
+  const M& meta() const { return meta_; }
+  auto data() const { return ptr_; }
+
+  template <class T>
+  void assign(T& value) noexcept {
+    meta_ = typename detail::reference_meta<M>::type{in_place_type<decay_t<T>>};
+    ptr_ = &value;
+  }
 
  private:
-  typename wang::reference_meta<M>::type meta_;
+  typename detail::reference_meta<M>::type meta_;
   add_qualification_t<void, Q>* ptr_;
 };
 

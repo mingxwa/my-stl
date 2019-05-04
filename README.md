@@ -1,4 +1,4 @@
-# wang
+# my-stl
 
 This is the repository of all the ISO C++ proposals I have submitted, together
 with their corresponding implementation.

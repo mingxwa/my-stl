@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #include <cstdio>
@@ -9,15 +9,16 @@
 #include <future>
 #include <mutex>
 
-#include "../../main/experimental/concurrent.h"
 #include "../common/test_utility.h"
+#include "../../main/experimental/thread_pool.h"
+#include "../../main/experimental/async_mutex.h"
 
 constexpr std::size_t THREAD_COUNT = 100u;
 constexpr std::size_t TASK_GROUP_COUNT = 100u;
 constexpr std::size_t TASK_COUNT_PER_GROUP = 100u;
 constexpr std::chrono::milliseconds TASK_EXECUTE_DURATION{10};
 
-std::thread_pool<> pool(THREAD_COUNT);
+std::static_thread_pool<> pool(THREAD_COUNT);
 
 void mock_task_execution() {
   std::this_thread::sleep_for(TASK_EXECUTE_DURATION);
@@ -47,7 +48,8 @@ void test_mutex() {
 }
 
 void test_async_mutex() {
-  using mutex = std::async_mutex<typename std::thread_pool<>::executor_type>;
+  using mutex = std::async_mutex<typename std::static_thread_pool<>
+      ::executor_type>;
   test::time_recorder recorder("test_async_mutex");
   std::concurrent_invocation<void> outer_invocation;
   for (std::size_t i = 0; i < TASK_GROUP_COUNT; ++i) {

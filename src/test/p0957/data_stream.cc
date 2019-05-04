@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #include <cstdio>
@@ -52,6 +52,7 @@ int main() {
     s1.emplace(i);
   }
   std::reference_proxy<DataStream<double>> p(s1);
+  p = s1;
   while (p.has_next()) {
     printf("%f\n", p.next());
   }

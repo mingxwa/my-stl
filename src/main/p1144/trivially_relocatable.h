@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2017-2018 Mingxin Wang. All rights reserved.
+ * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
 #ifndef SRC_MAIN_P1144_TRIVIALLY_RELOCATABLE_H_
