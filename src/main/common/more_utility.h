@@ -30,14 +30,14 @@ template <class T>
 inline constexpr bool is_tuple_v
     = tuple_tratis_detail::sfinae_tuple_traits<void, T>::applicable;
 
-template <std::size_t I, class T,
-    class = std::enable_if_t<(I < std::tuple_size_v<T>)>>
-using extended_tuple_element_t = std::tuple_element_t<I, T>;
-
 template <template <class...> class... TTs>
 struct equal_templates {};
 
 namespace applicable_template_detail {
+
+template <std::size_t I, class T,
+    class = std::enable_if_t<(I < std::tuple_size_v<T>)>>
+using extended_tuple_element_t = std::tuple_element_t<I, T>;
 
 template <template <class...> class TT>
 struct template_tag { template <class... Args> using type = TT<Args...>; };
@@ -341,7 +341,7 @@ struct for_each_in_tuple_boundary_processor {
 
 template <class Index, class Tuple, class F, class = std::enable_if_t<
     std::is_invocable_v<
-        F&, extended_tuple_element_t<Index::value, Tuple>, Index
+        F&, decltype(std::get<Index::value>(std::declval<Tuple>())), Index
     >>>
 struct for_each_in_tuple_with_index_processor {
   static inline void apply(Tuple&& tp, F* fp) {
@@ -351,7 +351,8 @@ struct for_each_in_tuple_with_index_processor {
 };
 
 template <class Index, class Tuple, class F, class = std::enable_if_t<
-    std::is_invocable_v<F&, extended_tuple_element_t<Index::value, Tuple>>>>
+    std::is_invocable_v<
+        F&, decltype(std::get<Index::value>(std::declval<Tuple>()))>>>
 struct for_each_in_tuple_without_index_processor {
   static inline void apply(Tuple&& tp, F* fp) {
     std::invoke(*fp, std::get<Index::value>(std::forward<Tuple>(tp)));

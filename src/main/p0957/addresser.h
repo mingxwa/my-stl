@@ -154,25 +154,23 @@ class value_addresser {
 
   explicit value_addresser(delegated_tag_t) noexcept : meta_(nullptr) {}
 
-  template <class T>
-  explicit value_addresser(delegated_tag_t, T&& value)
+  template <class E_T>
+  explicit value_addresser(delegated_tag_t, E_T&& value)
       : value_addresser(delegated_tag) {
-    if constexpr (detail::VALUE_USES_SBO<
-        aid::constructed_extended_t<T>, SIZE, ALIGN>) {
-      init_small(forward<T>(value));
+    if constexpr (detail::VALUE_USES_SBO<aid::extending_t<E_T>, SIZE, ALIGN>) {
+      init_small(forward<E_T>(value));
     } else {
-      init_large(forward<T>(value), memory_allocator{});
+      init_large(forward<E_T>(value), memory_allocator{});
     }
   }
 
-  template <class T, class MA>
-  explicit value_addresser(delegated_tag_t, T&& value, MA&& ma)
+  template <class E_T, class E_MA>
+  explicit value_addresser(delegated_tag_t, E_T&& value, E_MA&& ma)
       : value_addresser(delegated_tag) {
-    if constexpr (detail::VALUE_USES_SBO<
-        aid::constructed_extended_t<T>, SIZE, ALIGN>) {
-      init_small(forward<T>(value));
+    if constexpr (detail::VALUE_USES_SBO<aid::extending_t<E_T>, SIZE, ALIGN>) {
+      init_small(forward<E_T>(value));
     } else {
-      init_large(forward<T>(value), forward<MA>(ma));
+      init_large(forward<E_T>(value), forward<E_MA>(ma));
     }
   }
 
@@ -212,21 +210,23 @@ class value_addresser {
       { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
 
  private:
-  template <class T>
-  void init_small(T&& value) {
-    using CET = aid::constructed_extended_t<T>;
-    new(&storage_.value_) aid::extended<CET>(aid::forward_extended<T>(value));
-    meta_ = &detail::META_STORAGE<detail::value_meta<M>, CET>;
+  template <class E_T>
+  void init_small(E_T&& value) {
+    using T = aid::extending_t<E_T>;
+    new(&storage_.value_)
+        aid::extended<T>(aid::extending_arg(forward<E_T>(value)));
+    meta_ = &detail::META_STORAGE<detail::value_meta<M>, T>;
   }
 
-  template <class T, class MA>
-  void init_large(T&& value, MA&& ma) {
-    using CET = aid::constructed_extended_t<T>;
-    using CEMA = aid::constructed_extended_t<MA>;
-    aid::extended<CEMA> ema{aid::forward_extended<MA>(ma)};
-    storage_.ptr_ = aid::construct<detail::managed_storage<CET, CEMA>>(
-        ema.get(), aid::forward_extended<T>(value), move(ema));
-    meta_ = &detail::META_STORAGE<detail::value_meta<M>, CET, CEMA>;
+  template <class E_T, class E_MA>
+  void init_large(E_T&& value, E_MA&& ma) {
+    using T = aid::extending_t<E_T>;
+    using MA = aid::extending_t<E_MA>;
+    aid::extended<MA> extended_ma = aid::make_extended(forward<E_MA>(ma));
+    storage_.ptr_ = aid::construct<detail::managed_storage<T, MA>>(
+        extended_ma.get(), aid::extending_arg(forward<E_T>(value)),
+        move(extended_ma));
+    meta_ = &detail::META_STORAGE<detail::value_meta<M>, T, MA>;
   }
 
   const detail::value_meta<M>* meta_;
