@@ -9,7 +9,7 @@
 
 namespace std {
 
-class memory_allocator {
+class global_memory_allocator {
  public:
   template <size_t SIZE, size_t ALIGN>
   void* allocate() const { return malloc(SIZE); }

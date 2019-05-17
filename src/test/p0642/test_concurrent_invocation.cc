@@ -30,13 +30,13 @@ struct contextual_data {
 };
 
 int main() {
-  std::crucial_thread_executor e;
+  std::thread_executor e;
 
   auto ciu = std::make_tuple(
-    std::make_concurrent_callable(e, [](const contextual_data& cd) noexcept {
+    std::make_concurrent_callable(e, [](const contextual_data& cd) {
       cd.result_of_library_a = call_library_a();
     }),
-    std::make_concurrent_callable(e, [](const contextual_data& cd) noexcept {
+    std::make_concurrent_callable(e, [](const contextual_data& cd) {
       cd.result_of_library_b = call_library_b();
     }));
 

@@ -17,9 +17,16 @@
 
 namespace std {
 
-class bad_concurrent_invocation_context_access : public exception {
+class invalid_concurrent_token : public logic_error {
  public:
-  const char* what() const noexcept override { return "Invalid context"; }
+  explicit invalid_concurrent_token()
+      : logic_error("Invalid concurrent token") {}
+};
+
+class invalid_concurrent_finalizer : public logic_error {
+ public:
+  explicit invalid_concurrent_finalizer()
+      : logic_error("Invalid concurrent finalizer") {}
 };
 
 template <class CTX, class E_CB, class MA>
@@ -77,7 +84,7 @@ struct ciu_caller {
 template <class CTX, class E_CB, class MA, class CIU,
     class = decltype(declval<CIU>().begin()),
     class = decltype(declval<CIU>().begin() != declval<CIU>().end())>
-struct container_traits {
+struct ciu_container_traits {
   static inline size_t size(CIU&& ciu) {
     return aid::for_each_in_container(forward<CIU>(ciu),
         ciu_size_statistics<CTX, E_CB, MA>{}).value;
@@ -91,24 +98,7 @@ struct container_traits {
 };
 
 template <class CTX, class E_CB, class MA, class CIU,
-    class = enable_if_t<tuple_size_v<remove_reference_t<CIU>> == 2u>,
-    class = decltype(get<0u>(declval<CIU>()) != get<1u>(declval<CIU>())),
-    class = decltype(++get<0u>(declval<CIU>())),
-    class = decltype(*get<0u>(declval<CIU>()))>
-struct ciu_iterator_pair_traits {
-  static inline size_t size(CIU&& ciu) {
-    return for_each(get<0u>(forward<CIU>(ciu)), get<1u>(forward<CIU>(ciu)),
-        ciu_size_statistics<CTX, E_CB, MA>{}).value;
-  }
-
-  static inline void call(const concurrent_breakpoint<CTX, E_CB, MA>* bp,
-      CIU&& ciu, size_t* remain) {
-    for_each(get<0u>(forward<CIU>(ciu)), get<1u>(forward<CIU>(ciu)),
-        ciu_caller<CTX, E_CB, MA>{bp, remain});
-  }
-};
-
-template <class CTX, class E_CB, class MA, class CIU>
+    class = enable_if_t<aid::is_tuple_v<CIU>>>
 struct ciu_tuple_traits {
   static inline size_t size(CIU&& ciu) {
     return aid::for_each_in_tuple(forward<CIU>(ciu),
@@ -122,19 +112,12 @@ struct ciu_tuple_traits {
   }
 };
 
-template <class CTX, class E_CB, class MA, class CIU,
-    class = enable_if_t<aid::is_tuple_v<CIU>>>
-struct tuple_traits : aid::applicable_template<
-    aid::equal_templates<ciu_iterator_pair_traits>,
-    aid::equal_templates<ciu_tuple_traits>
->::type<CTX, E_CB, MA, CIU> {};
-
 template <class CTX, class E_CB, class MA, class CIU>
 struct ciu_traits : aid::applicable_template<
     aid::equal_templates<
         concurrent_callable_traits,
-        tuple_traits,
-        container_traits
+        ciu_tuple_traits,
+        ciu_container_traits
     >
 >::type<CTX, E_CB, MA, CIU> {};
 
@@ -206,7 +189,7 @@ class concurrent_breakpoint {
 
 }  // namespace bp_detail
 
-template <class CTX, class E_CB, class MA = memory_allocator>
+template <class CTX, class E_CB, class MA = global_memory_allocator>
 class concurrent_token {
   friend auto bp_detail::make_token<>(
       const bp_detail::concurrent_breakpoint<CTX, E_CB, MA>*);
@@ -219,16 +202,12 @@ class concurrent_token {
 
   template <class CIU>
   void fork(CIU&& ciu) const {
-    if (!static_cast<bool>(bp_)) {
-      throw bad_concurrent_invocation_context_access{};
-    }
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_token{}; }
     bp_->fork(forward<CIU>(ciu));
   }
 
   decltype(auto) context() const {
-    if (!static_cast<bool>(bp_)) {
-      throw bad_concurrent_invocation_context_access{};
-    }
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_token{}; }
     return bp_->context();
   }
 
@@ -245,7 +224,7 @@ class concurrent_token {
       bp_;
 };
 
-template <class CTX, class E_CB, class MA = memory_allocator>
+template <class CTX, class E_CB, class MA = global_memory_allocator>
 class concurrent_finalizer {
   friend class bp_detail::concurrent_breakpoint<CTX, E_CB, MA>;
 
@@ -256,9 +235,7 @@ class concurrent_finalizer {
   concurrent_finalizer& operator=(concurrent_finalizer&&) = default;
 
   decltype(auto) context() const {
-    if (!static_cast<bool>(bp_)) {
-      throw bad_concurrent_invocation_context_access{};
-    }
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_finalizer{}; }
     return bp_->context();
   }
 
@@ -459,7 +436,8 @@ class promise_continuation<void> {
   promise<void> p_;
 };
 
-template <class CIU, class E_CTX, class E_CB, class E_MA = memory_allocator>
+template <class CIU, class E_CTX, class E_CB,
+    class E_MA = global_memory_allocator>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma = E_MA{}) {
   using BP = bp_detail::concurrent_breakpoint<
       aid::extending_t<E_CTX>, decay_t<E_CB>, aid::extending_t<E_MA>>;
@@ -471,7 +449,8 @@ void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma = E_MA{}) {
 
 struct in_place_executor {
   template <class F>
-  void execute(F&& f) const { invoke(forward<F>(f)); }
+  void execute(F&& f) const
+      { invoke(aid::make_extended_view(forward<F>(f)).get()); }
 };
 
 template <class CIU, class E_CTX = in_place_type_t<void>>
@@ -487,36 +466,31 @@ decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
   return result;
 }
 
-struct daemon_thread_executor {
-  template <class E_F>
-  void execute(E_F&& f) const {
-    thread([f = forward<E_F>(f)]() mutable
-        { invoke(aid::make_extended_view(move(f)).get()); }).detach();
-  }
-};
+class thread_executor {
+  using token_t = concurrent_token<void, concurrent_callback<
+        in_place_executor, promise_continuation<void>>>;
 
-class crucial_thread_executor {
  public:
   template <class E_F>
   void execute(E_F&& f) const {
-    get_store().token_.fork(
-        make_concurrent_callable(daemon_thread_executor{}, forward<E_F>(f)));
+    token_t token;
+    get_token().fork([&](token_t&& t) { token = move(t); });
+    thread([f = forward<E_F>(f), token = move(token)]() mutable
+        { invoke(aid::make_extended_view(move(f)).get()); }).detach();
   }
 
  private:
-  struct store {
-    store() noexcept
-        { f_ = concurrent_invoke([=](auto&& token) { token_ = move(token); }); }
-    ~store() { { auto token = move(token_); } f_.get(); }
+  static inline const token_t& get_token() {
+    struct store {
+      store() noexcept {
+        f_ = concurrent_invoke([=](token_t&& token) { token_ = move(token); });
+      }
+      ~store() { { auto token = move(token_); } f_.get(); }
 
-    future<void> f_;
-    concurrent_token<void, concurrent_callback<
-        in_place_executor, promise_continuation<void>>> token_;
-  };
-
-  static inline const store& get_store() {
-    static const store s;
-    return s;
+      future<void> f_;
+      token_t token_;
+    } static const s;
+    return s.token_;
   }
 };
 

@@ -19,6 +19,12 @@ namespace std {
 struct delegated_tag_t { explicit delegated_tag_t() = default; };
 inline constexpr delegated_tag_t delegated_tag{};
 
+class null_value_addresser_error : public logic_error {
+ public:
+  explicit null_value_addresser_error()
+      : logic_error("The value addresser is not representing a value") {}
+};
+
 namespace detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
@@ -160,7 +166,7 @@ class value_addresser {
     if constexpr (detail::VALUE_USES_SBO<aid::extending_t<E_T>, SIZE, ALIGN>) {
       init_small(forward<E_T>(value));
     } else {
-      init_large(forward<E_T>(value), memory_allocator{});
+      init_large(forward<E_T>(value), global_memory_allocator{});
     }
   }
 
@@ -183,7 +189,10 @@ class value_addresser {
   value_addresser& operator=(value_addresser&& rhs) noexcept
       { swap(rhs); return *this; }
 
-  const M& meta() const { return meta_->core_; }
+  const M& meta() const {
+    if (meta_ == nullptr) { throw null_value_addresser_error{}; }
+    return meta_->core_;
+  }
   decltype(auto) data() & { return storage_; }
   decltype(auto) data() && { return move(storage_); }
   decltype(auto) data() const& { return storage_; }
@@ -256,8 +265,8 @@ class reference_addresser {
   reference_addresser& operator=(const reference_addresser<_M, _Q>& rhs)
       noexcept { meta_ = rhs.meta(); ptr_ = rhs.ptr_; return *this; }
 
-  const M& meta() const { return meta_; }
-  auto data() const { return ptr_; }
+  const M& meta() const noexcept { return meta_; }
+  auto data() const noexcept { return ptr_; }
 
   template <class T>
   void assign(T& value) noexcept {
