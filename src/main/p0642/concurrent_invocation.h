@@ -6,14 +6,17 @@
 #define SRC_MAIN_P0642_CONCURRENT_INVOCATION_H_
 
 #include <utility>
+#include <stdexcept>
 #include <tuple>
 #include <memory>
 #include <atomic>
 #include <thread>
 #include <future>
 
-#include "../p1172/memory_allocator.h"
 #include "../common/more_utility.h"
+#include "../p1172/memory_allocator.h"
+#include "../p1649/applicable_template.h"
+#include "../p1648/extended.h"
 
 namespace std {
 
@@ -51,91 +54,48 @@ template <class CTX, class E_CB, class MA>
 auto make_token(const concurrent_breakpoint<CTX, E_CB, MA>* bp)
     { return concurrent_token<CTX, E_CB, MA>{bp}; }
 
-template <class CTX, class E_CB, class MA, class CIU,
-    class = enable_if_t<is_invocable_v<CIU, concurrent_token<CTX, E_CB, MA>>>>
-struct concurrent_callable_traits {
-  static inline constexpr size_t size(CIU&&) { return 1u; }
-  static inline void call(const concurrent_breakpoint<CTX, E_CB, MA>* bp,
-      CIU&& ciu, size_t* remain) {
-    invoke(forward<CIU>(ciu), make_token(bp));
-    --*remain;
-  }
-};
-
 template <class CTX, class E_CB, class MA>
 struct ciu_size_statistics {
-  template <class CIU>
-  void operator()(CIU&& ciu)
-      { value += ciu_size<CTX, E_CB, MA>(forward<CIU>(ciu)); }
+  template <class CIU, class = enable_if_t<
+      is_invocable_v<CIU, concurrent_token<CTX, E_CB, MA>>>>
+  void operator()(CIU&&) { ++value; }
 
   size_t value = 0u;
 };
 
 template <class CTX, class E_CB, class MA>
 struct ciu_caller {
-  template <class CIU>
-  void operator()(CIU&& ciu)
-      { concurrent_call(bp_, forward<CIU>(ciu), remain_); }
+  template <class CIU, class = enable_if_t<
+      is_invocable_v<CIU, concurrent_token<CTX, E_CB, MA>>>>
+  void operator()(CIU&& ciu) {
+    invoke(forward<CIU>(ciu), make_token(bp_));
+    --*remain_;
+  }
 
   const concurrent_breakpoint<CTX, E_CB, MA>* bp_;
   size_t* remain_;
 };
 
-template <class CTX, class E_CB, class MA, class CIU,
-    class = decltype(declval<CIU>().begin()),
-    class = decltype(declval<CIU>().begin() != declval<CIU>().end())>
-struct ciu_container_traits {
-  static inline size_t size(CIU&& ciu) {
-    return aid::for_each_in_container(forward<CIU>(ciu),
-        ciu_size_statistics<CTX, E_CB, MA>{}).value;
-  }
-
-  static inline void call(const concurrent_breakpoint<CTX, E_CB, MA>* bp,
-      CIU&& ciu, size_t* remain) {
-    aid::for_each_in_container(forward<CIU>(ciu),
-        ciu_caller<CTX, E_CB, MA>{bp, remain});
-  }
-};
-
-template <class CTX, class E_CB, class MA, class CIU,
-    class = enable_if_t<aid::is_tuple_v<CIU>>>
-struct ciu_tuple_traits {
-  static inline size_t size(CIU&& ciu) {
-    return aid::for_each_in_tuple(forward<CIU>(ciu),
-        ciu_size_statistics<CTX, E_CB, MA>{}).value;
-  }
-
-  static inline void call(const concurrent_breakpoint<CTX, E_CB, MA>* bp,
-      CIU&& ciu, size_t* remain) {
-    aid::for_each_in_tuple(forward<CIU>(ciu),
-        ciu_caller<CTX, E_CB, MA>{bp, remain});
-  }
-};
-
 template <class CTX, class E_CB, class MA, class CIU>
-struct ciu_traits : aid::applicable_template<
-    aid::equal_templates<
-        concurrent_callable_traits,
-        ciu_tuple_traits,
-        ciu_container_traits
-    >
->::type<CTX, E_CB, MA, CIU> {};
-
-template <class CTX, class E_CB, class MA, class CIU>
-size_t ciu_size(CIU&& ciu)
-    { return ciu_traits<CTX, E_CB, MA, CIU>::size(forward<CIU>(ciu)); }
+size_t ciu_size(CIU&& ciu) {
+  ciu_size_statistics<CTX, E_CB, MA> statistics;
+  aid::for_each_in_aggregation(forward<CIU>(ciu), statistics);
+  return statistics.value;
+}
 
 template <class CTX, class E_CB, class MA, class CIU>
 void concurrent_call(const concurrent_breakpoint<CTX, E_CB, MA>* bp, CIU&& ciu,
-    size_t* remain)
-    { ciu_traits<CTX, E_CB, MA, CIU>::call(bp, forward<CIU>(ciu), remain); }
+    size_t* remain) {
+  aid::for_each_in_aggregation(
+      forward<CIU>(ciu), ciu_caller<CTX, E_CB, MA>{bp, remain});
+}
 
 template <class CTX, class E_CB, class MA>
 class concurrent_breakpoint {
  public:
   template <class CIU, class EP_CTX, class _E_CB>
   explicit concurrent_breakpoint(CIU&& ciu, EP_CTX&& ctx, _E_CB&& cb,
-      aid::extended<MA> ma) : ctx_(forward<EP_CTX>(ctx)),
+      extended<MA> ma) : ctx_(forward<EP_CTX>(ctx)),
       cb_(forward<_E_CB>(cb)), ma_(move(ma)) {
     size_t count = ciu_size<CTX, E_CB, MA>(forward<CIU>(ciu));
     if (count == 0u) {
@@ -160,7 +120,7 @@ class concurrent_breakpoint {
     }
   }
 
-  void destroy() { aid::destroy(aid::extended<MA>{move(ma_)}.get(), this); }
+  void destroy() { aid::destroy(extended<MA>{move(ma_)}.get(), this); }
 
   decltype(auto) context() const noexcept { return ctx_.get(); }
   decltype(auto) context() noexcept { return ctx_.get(); }
@@ -177,14 +137,14 @@ class concurrent_breakpoint {
   }
 
   void join_last() {
-    invoke(aid::make_extended(move(cb_)).get(),
+    invoke(make_extended(move(cb_)).get(),
         concurrent_finalizer<CTX, E_CB, MA>{this});
   }
 
   mutable atomic_size_t count_;
-  aid::extended<CTX> ctx_;
+  extended<CTX> ctx_;
   E_CB cb_;
-  aid::extended<MA> ma_;
+  extended<MA> ma_;
 };
 
 }  // namespace bp_detail
@@ -280,10 +240,10 @@ struct invoke_continuation_without_finalizer_processor {
 template <class CT, class CTX, class E_CB, class MA>
 void invoke_continuation(CT&& ct,
     concurrent_finalizer<CTX, E_CB, MA>&& finalizer) {
-  aid::applicable_template<
-      aid::equal_templates<invoke_continuation_with_finalizer_processor>,
-      aid::equal_templates<invoke_continuation_with_context_processor>,
-      aid::equal_templates<invoke_continuation_without_finalizer_processor>
+  applicable_template<
+      equal_templates<invoke_continuation_with_finalizer_processor>,
+      equal_templates<invoke_continuation_with_context_processor>,
+      equal_templates<invoke_continuation_without_finalizer_processor>
   >::type<CT, CTX, E_CB, MA>::apply(forward<CT>(ct), move(finalizer));
 }
 
@@ -310,10 +270,10 @@ struct invoke_callable_without_token_processor {
 
 template <class F, class CTX, class E_CB, class MA>
 void invoke_callable(F&& f, concurrent_token<CTX, E_CB, MA>&& token) {
-  aid::applicable_template<
-      aid::equal_templates<invoke_callable_with_token_processor>,
-      aid::equal_templates<invoke_callable_with_context_processor>,
-      aid::equal_templates<invoke_callable_without_token_processor>
+  applicable_template<
+      equal_templates<invoke_callable_with_token_processor>,
+      equal_templates<invoke_callable_with_context_processor>,
+      equal_templates<invoke_callable_without_token_processor>
   >::type<F, CTX, E_CB, MA>::apply(forward<F>(f), move(token));
 }
 
@@ -330,7 +290,7 @@ class contextual_concurrent_callable {
 
   void operator()() && {
     ci_detail::invoke_callable(
-        aid::make_extended_view(move(f_)).get(), move(token_));
+        make_extended_view(move(f_)).get(), move(token_));
   }
 
  private:
@@ -350,9 +310,8 @@ class concurrent_callable {
 
   template <class CTX, class E_CB, class MA>
   void operator()(concurrent_token<CTX, E_CB, MA>&& token) && {
-    aid::make_extended_view(move(e_)).get()
-        .execute(contextual_concurrent_callable<E_F, CTX, E_CB, MA>{
-            move(f_), move(token)});
+    make_extended_view(move(e_)).get().execute(contextual_concurrent_callable<
+        E_F, CTX, E_CB, MA>{move(f_), move(token)});
   }
 
  private:
@@ -371,7 +330,7 @@ class contextual_concurrent_callback {
       = default;
 
   void operator()() && {
-    ci_detail::invoke_continuation(aid::make_extended_view(move(ct_)).get(),
+    ci_detail::invoke_continuation(make_extended_view(move(ct_)).get(),
         move(finalizer_));
   }
 
@@ -392,9 +351,8 @@ class concurrent_callback {
 
   template <class CTX, class E_CB, class MA>
   void operator()(concurrent_finalizer<CTX, E_CB, MA>&& finalizer) && {
-    aid::make_extended_view(move(e_)).get()
-        .execute(contextual_concurrent_callback<E_CT, CTX, E_CB, MA>{
-            move(ct_), move(finalizer)});
+    make_extended_view(move(e_)).get().execute(contextual_concurrent_callback<
+        E_CT, CTX, E_CB, MA>{move(ct_), move(finalizer)});
   }
 
  private:
@@ -440,24 +398,21 @@ template <class CIU, class E_CTX, class E_CB,
     class E_MA = global_memory_allocator>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma = E_MA{}) {
   using BP = bp_detail::concurrent_breakpoint<
-      aid::extending_t<E_CTX>, decay_t<E_CB>, aid::extending_t<E_MA>>;
-  auto extended_ma = aid::make_extended(ma);
+      extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>;
+  auto extended_ma = make_extended(ma);
   aid::construct<BP>(extended_ma.get(), forward<CIU>(ciu),
-      aid::extending_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb),
-      move(extended_ma));
+      extending_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb), move(extended_ma));
 }
 
 struct in_place_executor {
   template <class F>
-  void execute(F&& f) const
-      { invoke(aid::make_extended_view(forward<F>(f)).get()); }
+  void execute(F&& f) const { invoke(make_extended_view(forward<F>(f)).get()); }
 };
 
 template <class CIU, class E_CTX = in_place_type_t<void>>
 decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
   using R = conditional_t<
-      is_move_constructible_v<aid::extending_t<E_CTX>>,
-      aid::extending_t<E_CTX>, void>;
+      is_move_constructible_v<extending_t<E_CTX>>, extending_t<E_CTX>, void>;
   promise<R> p;
   future<R> result = p.get_future();
   concurrent_invoke(forward<CIU>(ciu), forward<E_CTX>(ctx),
@@ -476,7 +431,7 @@ class thread_executor {
     token_t token;
     get_token().fork([&](token_t&& t) { token = move(t); });
     thread([f = forward<E_F>(f), token = move(token)]() mutable
-        { invoke(aid::make_extended_view(move(f)).get()); }).detach();
+        { invoke(make_extended_view(move(f)).get()); }).detach();
   }
 
  private:

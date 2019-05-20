@@ -2,12 +2,13 @@
  * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
  */
 
-#ifndef SRC_TEST_COMMON_MY_TO_STRING_H_
-#define SRC_TEST_COMMON_MY_TO_STRING_H_
+#ifndef SRC_TEST_P1649_MY_TO_STRING_H_
+#define SRC_TEST_P1649_MY_TO_STRING_H_
 
 #include <utility>
 #include <string>
 
+#include "../../main/p1649/applicable_template.h"
 #include "../../main/common/more_utility.h"
 
 namespace test {
@@ -45,9 +46,7 @@ struct aggregation_appender {
   bool is_first_ = true;
 };
 
-template <class T,
-    class = decltype(std::declval<const T&>().begin()),
-    class = decltype(std::declval<const T&>().end())>
+template <class T, class = std::enable_if_t<aid::is_container_v<T>>>
 struct container_stringification_traits {
   static inline std::string apply(const T& value) {
     std::string result = "[";
@@ -71,10 +70,10 @@ struct tuple_stringification_traits {
 
 template <class T>
 std::string my_to_string(const T& value) {
-  return aid::applicable_template<
-      aid::equal_templates<detail::primitive_stringification_traits>,
-      aid::equal_templates<detail::string_stringification_traits>,
-      aid::equal_templates<
+  return std::applicable_template<
+      std::equal_templates<detail::primitive_stringification_traits>,
+      std::equal_templates<detail::string_stringification_traits>,
+      std::equal_templates<
           detail::container_stringification_traits,
           detail::tuple_stringification_traits>
   >::type<T>::apply(value);
@@ -82,4 +81,4 @@ std::string my_to_string(const T& value) {
 
 }  // namespace test
 
-#endif  // SRC_TEST_COMMON_MY_TO_STRING_H_
+#endif  // SRC_TEST_P1649_MY_TO_STRING_H_

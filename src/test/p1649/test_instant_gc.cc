@@ -27,7 +27,8 @@ void ConnectRooms(Room* a, Room* b) {
 }
 
 Room* generate_dungeon(int N, double P) {
-  std::mt19937 gen(std::random_device{}());
+  std::random_device rd;
+  std::mt19937 gen(rd());
   std::uniform_real_distribution<double> dis;
   std::vector<std::vector<Room*>> rooms(N);
   std::size_t next_id = 1u;

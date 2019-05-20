@@ -7,6 +7,7 @@
 
 #include <typeinfo>
 #include <utility>
+#include <stdexcept>
 #include <initializer_list>
 
 #include "../p1144/trivially_relocatable.h"
