@@ -13,10 +13,10 @@
 #include <thread>
 #include <future>
 
-#include "../common/more_utility.h"
 #include "../p1172/memory_allocator.h"
 #include "../p1649/applicable_template.h"
 #include "../p1648/extended.h"
+#include "../common/more_utility.h"
 
 namespace std {
 

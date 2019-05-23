@@ -12,6 +12,7 @@
 
 #include "../p1144/trivially_relocatable.h"
 #include "../p1172/memory_allocator.h"
+#include "../p1648/extended.h"
 #include "../common/more_utility.h"
 #include "./more_type_traits.h"
 
@@ -26,21 +27,20 @@ class null_value_addresser_error : public logic_error {
       : logic_error("The value addresser is not representing a value") {}
 };
 
+template <class T, class MA>
+struct allocated_value : extended<T> {
+  template <class _T>
+  explicit allocated_value(_T&& value, extended<MA>&& ma)
+      : extended<T>(forward<_T>(value)), ma_(move(ma)) {}
+
+  extended<MA> ma_;
+};
+
 namespace detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
-inline constexpr bool VALUE_USES_SBO = sizeof(aid::extended<T>) <= SIZE
-    && alignof(aid::extended<T>) <= ALIGN && is_trivially_relocatable_v<T>;
-
-template <class T, class MA>
-struct managed_storage : aid::extended<T> {
- public:
-  template <class _T>
-  explicit managed_storage(_T&& value, aid::extended<MA>&& ma)
-      : aid::extended<T>(forward<_T>(value)), ma_(move(ma)) {}
-
-  aid::extended<MA> ma_;
-};
+inline constexpr bool VALUE_USES_SBO = sizeof(extended<T>) <= SIZE
+    && alignof(extended<T>) <= ALIGN && is_trivially_relocatable_v<T>;
 
 template <size_t SIZE, size_t ALIGN>
 union value_storage {
@@ -75,7 +75,7 @@ struct erased_value {
 
   template <class T>
   decltype(auto) cast() const {
-    using U = add_qualification_t<aid::extended<T>, Q>;
+    using U = add_qualification_t<extended<T>, Q>;
     add_qualification_t<void, Q>* p;
     if constexpr (detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
       p = &storage_->value_;
@@ -115,16 +115,34 @@ struct reference_meta<M, false> {
 };
 
 template <class T>
-void destroy_small_value(void* erased) {
-  using U = aid::extended<T>;
-  static_cast<U*>(erased)->~U();
+void destroy_small_value(void* erased)
+    { static_cast<extended<T>*>(erased)->~extended(); }
+
+template <class T, class MA, class... Args>
+T* construct(MA&& ma, Args&&... args) {
+  void* result = ma.template allocate<sizeof(T), alignof(T)>();
+  try {
+    return new(result) T(std::forward<Args>(args)...);
+  } catch (...) {
+    ma.template deallocate<sizeof(T), alignof(T)>(result);
+    throw;
+  }
 }
 
+template <class MA, class T>
+void destroy(MA&& ma, T* p) {
+  try {
+    p->~T();
+  } catch (...) {
+    ma.template deallocate<sizeof(T), alignof(T)>(p);
+    throw;
+  }
+  ma.template deallocate<sizeof(T), alignof(T)>(p);
+}
 template <class T, class MA>
 void destroy_large_value(void* erased) {
-  detail::managed_storage<T, MA>* p =
-      *static_cast<detail::managed_storage<T, MA>**>(erased);
-  aid::extended<MA> ma = move(p->ma_);
+  allocated_value<T, MA>* p = *static_cast<allocated_value<T, MA>**>(erased);
+  extended<MA> ma = move(p->ma_);
   aid::destroy(move(ma).get(), p);
 }
 
@@ -164,7 +182,7 @@ class value_addresser {
   template <class E_T>
   explicit value_addresser(delegated_tag_t, E_T&& value)
       : value_addresser(delegated_tag) {
-    if constexpr (detail::VALUE_USES_SBO<aid::extending_t<E_T>, SIZE, ALIGN>) {
+    if constexpr (detail::VALUE_USES_SBO<extending_t<E_T>, SIZE, ALIGN>) {
       init_small(forward<E_T>(value));
     } else {
       init_large(forward<E_T>(value), global_memory_allocator{});
@@ -174,7 +192,7 @@ class value_addresser {
   template <class E_T, class E_MA>
   explicit value_addresser(delegated_tag_t, E_T&& value, E_MA&& ma)
       : value_addresser(delegated_tag) {
-    if constexpr (detail::VALUE_USES_SBO<aid::extending_t<E_T>, SIZE, ALIGN>) {
+    if constexpr (detail::VALUE_USES_SBO<extending_t<E_T>, SIZE, ALIGN>) {
       init_small(forward<E_T>(value));
     } else {
       init_large(forward<E_T>(value), forward<E_MA>(ma));
@@ -222,20 +240,18 @@ class value_addresser {
  private:
   template <class E_T>
   void init_small(E_T&& value) {
-    using T = aid::extending_t<E_T>;
-    new(&storage_.value_)
-        aid::extended<T>(aid::extending_arg(forward<E_T>(value)));
+    using T = extending_t<E_T>;
+    new(&storage_.value_) extended<T>(extending_arg(forward<E_T>(value)));
     meta_ = &detail::META_STORAGE<detail::value_meta<M>, T>;
   }
 
   template <class E_T, class E_MA>
   void init_large(E_T&& value, E_MA&& ma) {
-    using T = aid::extending_t<E_T>;
-    using MA = aid::extending_t<E_MA>;
-    aid::extended<MA> extended_ma = aid::make_extended(forward<E_MA>(ma));
-    storage_.ptr_ = aid::construct<detail::managed_storage<T, MA>>(
-        extended_ma.get(), aid::extending_arg(forward<E_T>(value)),
-        move(extended_ma));
+    using T = extending_t<E_T>;
+    using MA = extending_t<E_MA>;
+    extended<MA> ema = make_extended(forward<E_MA>(ma));
+    storage_.ptr_ = aid::construct<allocated_value<T, MA>>(
+        ema.get(), extending_arg(forward<E_T>(value)), move(ema));
     meta_ = &detail::META_STORAGE<detail::value_meta<M>, T, MA>;
   }
 

@@ -64,8 +64,8 @@ class extended_value {
 
  private:
   template <class E_ArgsTuple, size_t... I>
-  constexpr extended_value(E_ArgsTuple&& args, index_sequence<I...>)
-      noexcept : value_(make_extended_view(get<I>(move(args))).get()...) {}
+  constexpr extended_value(E_ArgsTuple&& args, index_sequence<I...>) noexcept
+      : value_(make_extended_view(std::get<I>(move(args))).get()...) {}
 
   T value_;
 };

@@ -17,13 +17,23 @@ namespace aid {
 
 template <class T, class MA, class... Args>
 T* construct(MA&& ma, Args&&... args) {
-  return new(ma.template allocate<sizeof(T), alignof(T)>())
-      T(std::forward<Args>(args)...);
+  void* result = ma.template allocate<sizeof(T), alignof(T)>();
+  try {
+    return new(result) T(std::forward<Args>(args)...);
+  } catch (...) {
+    ma.template deallocate<sizeof(T), alignof(T)>(result);
+    throw;
+  }
 }
 
 template <class MA, class T>
 void destroy(MA&& ma, T* p) {
-  p->~T();
+  try {
+    p->~T();
+  } catch (...) {
+    ma.template deallocate<sizeof(T), alignof(T)>(p);
+    throw;
+  }
   ma.template deallocate<sizeof(T), alignof(T)>(p);
 }
 
