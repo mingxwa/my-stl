@@ -20,35 +20,26 @@
 
 namespace std {
 
-class invalid_concurrent_token : public logic_error {
+class invalid_concurrent_breakpoint : public logic_error {
  public:
-  explicit invalid_concurrent_token()
-      : logic_error("Invalid concurrent token") {}
+  explicit invalid_concurrent_breakpoint()
+      : logic_error("Invalid concurrent breakpoint") {}
 };
-
-class invalid_concurrent_finalizer : public logic_error {
- public:
-  explicit invalid_concurrent_finalizer()
-      : logic_error("Invalid concurrent finalizer") {}
-};
-
-template <class CTX, class E_CB, class MA>
-class concurrent_token;
-
-template <class CTX, class E_CB, class MA>
-class concurrent_finalizer;
-
-namespace bp_detail {
 
 template <class CTX, class E_CB, class MA>
 class concurrent_breakpoint;
 
-template <class CTX, class E_CB, class MA, class CIU>
-size_t ciu_size(CIU&&);
+template <class CTX, class E_CB, class MA = global_memory_allocator>
+class concurrent_token;
 
-template <class CTX, class E_CB, class MA, class CIU>
-void concurrent_call(const concurrent_breakpoint<CTX, E_CB, MA>*, CIU&&,
-    size_t*);
+template <class CTX, class E_CB, class MA = global_memory_allocator>
+class concurrent_finalizer;
+
+template <class CIU, class E_CTX, class E_CB,
+    class E_MA = global_memory_allocator>
+void concurrent_invoke(CIU&&, E_CTX&&, E_CB&&, E_MA&& = E_MA{});
+
+namespace bp_detail {
 
 template <class CTX, class E_CB, class MA>
 auto make_token(const concurrent_breakpoint<CTX, E_CB, MA>* bp)
@@ -83,56 +74,38 @@ size_t ciu_size(CIU&& ciu) {
   return statistics.value;
 }
 
-template <class CTX, class E_CB, class MA, class CIU>
-void concurrent_call(const concurrent_breakpoint<CTX, E_CB, MA>* bp, CIU&& ciu,
-    size_t* remain) {
-  aid::for_each_in_aggregation(
-      forward<CIU>(ciu), ciu_caller<CTX, E_CB, MA>{bp, remain});
-}
+}  // namespace bp_detail
 
 template <class CTX, class E_CB, class MA>
 class concurrent_breakpoint {
- public:
-  template <class CIU, class EP_CTX, class _E_CB>
-  explicit concurrent_breakpoint(CIU&& ciu, EP_CTX&& ctx, _E_CB&& cb,
-      extended<MA> ma) : ctx_(forward<EP_CTX>(ctx)),
-      cb_(forward<_E_CB>(cb)), ma_(move(ma)) {
-    size_t count = ciu_size<CTX, E_CB, MA>(forward<CIU>(ciu));
-    if (count == 0u) {
-      join_last();
-    } else {
-      atomic_init(&count_, count);
-      call(forward<CIU>(ciu), count);
-    }
-  }
+  friend class concurrent_token<CTX, E_CB, MA>;
 
+  friend class concurrent_finalizer<CTX, E_CB, MA>;
+
+  template <class CIU, class E_CTX, class _E_CB, class E_MA>
+  friend void concurrent_invoke(CIU&&, E_CTX&&, _E_CB&&, E_MA&&);
+
+ public:
+  template <class EP_CTX, class _E_CB>
+  explicit concurrent_breakpoint(EP_CTX&& ctx, _E_CB&& cb, extended<MA> ma)
+      : ctx_(forward<EP_CTX>(ctx)), cb_(forward<_E_CB>(cb)), ma_(move(ma)) {}
+
+ private:
   template <class CIU>
-  void fork(CIU&& ciu) const {
-    size_t count = ciu_size<CTX, E_CB, MA>(forward<CIU>(ciu));
-    count_.fetch_add(count, memory_order_relaxed);
-    call(forward<CIU>(ciu), count);
+  void call(CIU&& ciu, size_t remain) const {
+    try {
+      aid::for_each_in_aggregation(forward<CIU>(ciu),
+          bp_detail::ciu_caller<CTX, E_CB, MA>{this, &remain});
+    } catch (...) {
+      join(remain);
+      throw;
+    }
   }
 
   void join(size_t count) const {
     if (count_.fetch_sub(count, memory_order_release) == count) {
       atomic_thread_fence(memory_order_acquire);
       const_cast<concurrent_breakpoint*>(this)->join_last();
-    }
-  }
-
-  void destroy() { aid::destroy(extended<MA>{move(ma_)}.get(), this); }
-
-  decltype(auto) context() const noexcept { return ctx_.get(); }
-  decltype(auto) context() noexcept { return ctx_.get(); }
-
- private:
-  template <class CIU>
-  void call(CIU&& ciu, size_t remain) const {
-    try {
-      concurrent_call(this, forward<CIU>(ciu), &remain);
-    } catch (...) {
-      join(remain);
-      throw;
     }
   }
 
@@ -147,12 +120,10 @@ class concurrent_breakpoint {
   extended<MA> ma_;
 };
 
-}  // namespace bp_detail
-
-template <class CTX, class E_CB, class MA = global_memory_allocator>
+template <class CTX, class E_CB, class MA>
 class concurrent_token {
   friend auto bp_detail::make_token<>(
-      const bp_detail::concurrent_breakpoint<CTX, E_CB, MA>*);
+      const concurrent_breakpoint<CTX, E_CB, MA>*);
 
  public:
   concurrent_token() = default;
@@ -162,31 +133,32 @@ class concurrent_token {
 
   template <class CIU>
   void fork(CIU&& ciu) const {
-    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_token{}; }
-    bp_->fork(forward<CIU>(ciu));
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_breakpoint{}; }
+    size_t count = bp_detail::ciu_size<CTX, E_CB, MA>(forward<CIU>(ciu));
+    bp_->count_.fetch_add(count, memory_order_relaxed);
+    bp_->call(forward<CIU>(ciu), count);
   }
 
   decltype(auto) context() const {
-    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_token{}; }
-    return bp_->context();
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_breakpoint{}; }
+    return bp_->ctx_.get();
   }
 
  private:
-  explicit concurrent_token(
-      const bp_detail::concurrent_breakpoint<CTX, E_CB, MA>* bp) : bp_(bp) {}
+  explicit concurrent_token(const concurrent_breakpoint<CTX, E_CB, MA>* bp)
+      : bp_(bp) {}
 
   struct deleter {
-    void operator()(const bp_detail::concurrent_breakpoint<CTX, E_CB, MA>* bp)
+    void operator()(const concurrent_breakpoint<CTX, E_CB, MA>* bp)
         { bp->join(1u); }
   };
 
-  unique_ptr<const bp_detail::concurrent_breakpoint<CTX, E_CB, MA>, deleter>
-      bp_;
+  unique_ptr<const concurrent_breakpoint<CTX, E_CB, MA>, deleter> bp_;
 };
 
-template <class CTX, class E_CB, class MA = global_memory_allocator>
+template <class CTX, class E_CB, class MA>
 class concurrent_finalizer {
-  friend class bp_detail::concurrent_breakpoint<CTX, E_CB, MA>;
+  friend class concurrent_breakpoint<CTX, E_CB, MA>;
 
  public:
   concurrent_finalizer() = default;
@@ -195,20 +167,20 @@ class concurrent_finalizer {
   concurrent_finalizer& operator=(concurrent_finalizer&&) = default;
 
   decltype(auto) context() const {
-    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_finalizer{}; }
-    return bp_->context();
+    if (!static_cast<bool>(bp_)) { throw invalid_concurrent_breakpoint{}; }
+    return bp_->ctx_.get();
   }
 
  private:
-  explicit concurrent_finalizer(
-      bp_detail::concurrent_breakpoint<CTX, E_CB, MA>* bp) : bp_(bp) {}
+  explicit concurrent_finalizer(concurrent_breakpoint<CTX, E_CB, MA>* bp)
+      : bp_(bp) {}
 
   struct deleter {
-    void operator()(bp_detail::concurrent_breakpoint<CTX, E_CB, MA>* bp)
-        { bp->destroy(); }
+    void operator()(concurrent_breakpoint<CTX, E_CB, MA>* bp)
+        { aid::destroy(extended<MA>{move(bp->ma_)}.get(), bp); }
   };
 
-  unique_ptr<bp_detail::concurrent_breakpoint<CTX, E_CB, MA>, deleter> bp_;
+  unique_ptr<concurrent_breakpoint<CTX, E_CB, MA>, deleter> bp_;
 };
 
 namespace ci_detail {
@@ -232,8 +204,8 @@ struct invoke_continuation_with_context_processor {
 template <class CT, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<CT>>>
 struct invoke_continuation_without_finalizer_processor {
-  static inline void apply(CT&& ct,
-      concurrent_finalizer<CTX, E_CB, MA>&& finalizer)
+  static inline void apply(
+      CT&& ct, concurrent_finalizer<CTX, E_CB, MA>&& finalizer)
       { { auto f = move(finalizer); } invoke(forward<CT>(ct)); }
 };
 
@@ -326,8 +298,7 @@ class contextual_concurrent_callback {
       concurrent_finalizer<CTX, E_CB, MA>&& finalizer)
       : ct_(move(ct)), finalizer_(move(finalizer)) {}
 
-  contextual_concurrent_callback(contextual_concurrent_callback&&)
-      = default;
+  contextual_concurrent_callback(contextual_concurrent_callback&&) = default;
 
   void operator()() && {
     ci_detail::invoke_continuation(make_extended_view(move(ct_)).get(),
@@ -394,14 +365,20 @@ class promise_continuation<void> {
   promise<void> p_;
 };
 
-template <class CIU, class E_CTX, class E_CB,
-    class E_MA = global_memory_allocator>
-void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma = E_MA{}) {
-  using BP = bp_detail::concurrent_breakpoint<
-      extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>;
+template <class CIU, class E_CTX, class E_CB, class E_MA>
+void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma) {
   auto extended_ma = make_extended(ma);
-  aid::construct<BP>(extended_ma.get(), forward<CIU>(ciu),
+  auto* bp = aid::construct<concurrent_breakpoint<
+      extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>>(extended_ma.get(),
       extending_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb), move(extended_ma));
+  size_t count = bp_detail::ciu_size<
+      extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>(forward<CIU>(ciu));
+  if (count == 0u) {
+    bp->join_last();
+  } else {
+    atomic_init(&bp->count_, count);
+    bp->call(forward<CIU>(ciu), count);
+  }
 }
 
 struct in_place_executor {
