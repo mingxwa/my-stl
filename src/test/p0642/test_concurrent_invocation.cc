@@ -41,7 +41,7 @@ int main() {
     }));
 
   auto cb = std::make_concurrent_callback(
-      std::in_place_executor{}, [](contextual_data&& data) { data.print(); });
+      e, [](contextual_data&& data) { data.print(); });
 
   std::concurrent_invoke(std::move(ciu), std::in_place_type<contextual_data>,
       std::move(cb));

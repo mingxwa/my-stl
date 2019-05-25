@@ -7,11 +7,13 @@
 
 #include <utility>
 #include <stdexcept>
+#include <deque>
 #include <tuple>
 #include <memory>
 #include <atomic>
 #include <thread>
 #include <future>
+#include <mutex>
 
 #include "../p1172/memory_allocator.h"
 #include "../p1649/applicable_template.h"
@@ -344,22 +346,25 @@ auto make_concurrent_callback(E_E&& e, E_CT&& ct) {
 }
 
 template <class CTX>
-class promise_continuation {
+class promise_callback {
  public:
-  explicit promise_continuation(promise<CTX>&& p) noexcept : p_(move(p)) {}
+  explicit promise_callback(promise<CTX>&& p) noexcept : p_(move(p)) {}
 
-  void operator()(CTX&& ctx) && { p_.set_value(move(ctx)); }
+  template <class E_CB, class MA>
+  void operator()(concurrent_finalizer<CTX, E_CB, MA>&& finalizer) &&
+      { p_.set_value(move(finalizer.context())); }
 
  private:
   promise<CTX> p_;
 };
 
 template <>
-class promise_continuation<void> {
+class promise_callback<void> {
  public:
-  explicit promise_continuation(promise<void>&& p) noexcept : p_(move(p)) {}
+  explicit promise_callback(promise<void>&& p) noexcept : p_(move(p)) {}
 
-  void operator()() && { p_.set_value(); }
+  template <class CTX, class E_CB, class MA>
+  void operator()(concurrent_finalizer<CTX, E_CB, MA>&&) && { p_.set_value(); }
 
  private:
   promise<void> p_;
@@ -381,11 +386,6 @@ void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma) {
   }
 }
 
-struct in_place_executor {
-  template <class F>
-  void execute(F&& f) const { invoke(make_extended_view(forward<F>(f)).get()); }
-};
-
 template <class CIU, class E_CTX = in_place_type_t<void>>
 decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
   using R = conditional_t<
@@ -393,36 +393,47 @@ decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
   promise<R> p;
   future<R> result = p.get_future();
   concurrent_invoke(forward<CIU>(ciu), forward<E_CTX>(ctx),
-      make_concurrent_callback(in_place_executor{},
-          promise_continuation<R>{move(p)}));
+      promise_callback<R>{move(p)});
   return result;
 }
 
 class thread_executor {
-  using token_t = concurrent_token<void, concurrent_callback<
-        in_place_executor, promise_continuation<void>>>;
-
  public:
-  template <class E_F>
-  void execute(E_F&& f) const {
-    token_t token;
-    get_token().fork([&](token_t&& t) { token = move(t); });
-    thread([f = forward<E_F>(f), token = move(token)]() mutable
-        { invoke(make_extended_view(move(f)).get()); }).detach();
+  template <class F>
+  void execute(F&& f) const {
+    thread th{forward<F>(f)};
+    store& s = get_store();
+    lock_guard<mutex> lk{s.mtx_};
+    s.q_.emplace_back(move(th));
   }
 
  private:
-  static inline const token_t& get_token() {
-    struct store {
-      store() noexcept {
-        f_ = concurrent_invoke([=](token_t&& token) { token_ = move(token); });
+  struct store {
+    ~store() {
+      deque<thread> q;
+      for (;;) {
+        {
+          lock_guard<mutex> lk{mtx_};
+          q = move(q_);
+          q_.clear();
+        }
+        if (q.empty()) {
+          break;
+        }
+        do {
+          thread th = move(q.front());
+          q.pop_front();
+          th.join();
+        } while (!q.empty());
       }
-      ~store() { { auto token = move(token_); } f_.get(); }
+    };
 
-      future<void> f_;
-      token_t token_;
-    } static const s;
-    return s.token_;
+    deque<thread> q_;
+    mutex mtx_;
+  };
+  static inline store& get_store() {
+    static store s;
+    return s;
   }
 };
 
