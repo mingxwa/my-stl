@@ -37,13 +37,13 @@ struct proxy_meta<ImmutableMap<K, V>, E> {
  private:
   template <class T>
   static const V& immutable_map_op_0(
-      E<qualification_type::const_qualified, reference_type::none> erased,
+      E<qualification_type::const_qualified, reference_type::lvalue> erased,
       const K& arg_0) {
     return erased.template cast<T>().at(arg_0);
   }
 
   const V& (*immutable_map_op_0_)(
-      E<qualification_type::const_qualified, reference_type::none>, const K&);
+      E<qualification_type::const_qualified, reference_type::lvalue>, const K&);
 };
 
 template <class K, class V, class A>
@@ -89,8 +89,8 @@ class proxy<ImmutableMap<K, V>, A> : public A {
     return *this;
   }
 
-  const V& at(const K& arg_0) const {
-    return A::meta().immutable_map_op_0_(A::data(), arg_0);
+  const V& at(const K& arg_0) const& {
+    return A::meta().immutable_map_op_0_(A::erased(), arg_0);
   }
 };
 

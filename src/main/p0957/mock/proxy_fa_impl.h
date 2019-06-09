@@ -35,18 +35,19 @@ struct proxy_meta<FA, E> {
  private:
   template <class T>
   static void fa_op_0(
-      E<qualification_type::none, reference_type::none> erased) {
+      E<qualification_type::none, reference_type::lvalue> erased) {
     erased.template cast<T>().fun_a_0();
   }
 
   template <class T>
-  static int fa_op_1(E<qualification_type::none, reference_type::none> erased,
+  static int fa_op_1(E<qualification_type::none, reference_type::lvalue> erased,
       double&& arg_0) {
     return erased.template cast<T>().fun_a_1(forward<double>(arg_0));
   }
 
-  void (*fa_op_0_)(E<qualification_type::none, reference_type::none>);
-  int (*fa_op_1_)(E<qualification_type::none, reference_type::none>, double&&);
+  void (*fa_op_0_)(E<qualification_type::none, reference_type::lvalue>);
+  int (*fa_op_1_)(E<qualification_type::none, reference_type::lvalue>,
+      double&&);
 };
 
 template <class A>
@@ -92,12 +93,12 @@ class proxy<FA, A> : public A {
     return *this;
   }
 
-  void fun_a_0() {
-    A::meta().fa_op_0_(A::data());
+  void fun_a_0() & {
+    A::meta().fa_op_0_(A::erased());
   }
 
-  int fun_a_1(double arg_0) {
-    return A::meta().fa_op_1_(A::data(), forward<double>(arg_0));
+  int fun_a_1(double arg_0) & {
+    return A::meta().fa_op_1_(A::erased(), forward<double>(arg_0));
   }
 };
 

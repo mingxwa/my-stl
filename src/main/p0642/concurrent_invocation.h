@@ -261,6 +261,8 @@ class contextual_concurrent_callable {
       : f_(move(f)), token_(move(token)) {}
 
   contextual_concurrent_callable(contextual_concurrent_callable&&) = default;
+  contextual_concurrent_callable& operator=(contextual_concurrent_callable&&)
+      = default;
 
   void operator()() && {
     ci_detail::invoke_callable(
@@ -275,12 +277,14 @@ class contextual_concurrent_callable {
 template <class E_E, class E_F>
 class concurrent_callable {
  public:
-  template <class _E_E, class _E_CC>
-  explicit concurrent_callable(_E_E&& e, _E_CC&& f)
-      : e_(forward<_E_E>(e)), f_(forward<_E_CC>(f)) {}
+  template <class _E_E, class _E_F>
+  explicit concurrent_callable(_E_E&& e, _E_F&& f)
+      : e_(forward<_E_E>(e)), f_(forward<_E_F>(f)) {}
 
   concurrent_callable(const concurrent_callable&) = default;
   concurrent_callable(concurrent_callable&&) = default;
+  concurrent_callable& operator=(const concurrent_callable&) = default;
+  concurrent_callable& operator=(concurrent_callable&&) = default;
 
   template <class CTX, class E_CB, class MA>
   void operator()(concurrent_token<CTX, E_CB, MA>&& token) && {
@@ -301,6 +305,8 @@ class contextual_concurrent_callback {
       : ct_(move(ct)), finalizer_(move(finalizer)) {}
 
   contextual_concurrent_callback(contextual_concurrent_callback&&) = default;
+  contextual_concurrent_callback& operator=(contextual_concurrent_callback&&)
+      = default;
 
   void operator()() && {
     ci_detail::invoke_continuation(make_extended_view(move(ct_)).get(),
@@ -321,6 +327,8 @@ class concurrent_callback {
 
   concurrent_callback(const concurrent_callback&) = default;
   concurrent_callback(concurrent_callback&&) = default;
+  concurrent_callback& operator=(const concurrent_callback&) = default;
+  concurrent_callback& operator=(concurrent_callback&&) = default;
 
   template <class CTX, class E_CB, class MA>
   void operator()(concurrent_finalizer<CTX, E_CB, MA>&& finalizer) && {
@@ -375,7 +383,7 @@ void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma) {
   auto extended_ma = make_extended(ma);
   auto* bp = aid::construct<concurrent_breakpoint<
       extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>>(extended_ma.get(),
-      extending_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb), move(extended_ma));
+      extended_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb), move(extended_ma));
   size_t count = bp_detail::ciu_size<
       extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>(forward<CIU>(ciu));
   if (count == 0u) {
@@ -414,8 +422,7 @@ class thread_executor {
       for (;;) {
         {
           lock_guard<mutex> lk{mtx_};
-          q = move(q_);
-          q_.clear();
+          swap(q, q_);
         }
         if (q.empty()) {
           break;

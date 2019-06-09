@@ -38,7 +38,7 @@ struct proxy_meta<DataStream<V>, E> {
  private:
   template <class T>
   static V data_stream_op_0(
-      E<qualification_type::none, reference_type::none> erased) {
+      E<qualification_type::none, reference_type::lvalue> erased) {
     if constexpr(is_void_v<V>) {
       erased.template cast<T>().next();
     } else {
@@ -48,13 +48,13 @@ struct proxy_meta<DataStream<V>, E> {
 
   template <class T>
   static bool data_stream_op_1(
-      E<qualification_type::const_qualified, reference_type::none> erased) {
+      E<qualification_type::const_qualified, reference_type::lvalue> erased) {
     return erased.template cast<T>().has_next();
   }
 
-  V (*data_stream_op_0_)(E<qualification_type::none, reference_type::none>);
+  V (*data_stream_op_0_)(E<qualification_type::none, reference_type::lvalue>);
   bool (*data_stream_op_1_)(
-      E<qualification_type::const_qualified, reference_type::none>);
+      E<qualification_type::const_qualified, reference_type::lvalue>);
 };
 
 template <class V, class A>
@@ -100,12 +100,12 @@ class proxy<DataStream<V>, A> : public A {
     return *this;
   }
 
-  V next() {
-    return A::meta().data_stream_op_0_(A::data());
+  V next() & {
+    return A::meta().data_stream_op_0_(A::erased());
   }
 
-  bool has_next() const {
-    return A::meta().data_stream_op_1_(A::data());
+  bool has_next() const& {
+    return A::meta().data_stream_op_1_(A::erased());
   }
 };
 

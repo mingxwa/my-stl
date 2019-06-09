@@ -170,7 +170,7 @@ struct extended_default_traits {
 };
 
 template <class T>
-struct extended_traits : applicable_template<
+using extended_traits = applicable_template<
     equal_templates<
         extended_reference_wrapper_traits,
         extended_in_place_type_traits,
@@ -178,7 +178,7 @@ struct extended_traits : applicable_template<
         extended_tuple_traits
     >,
     equal_templates<extended_default_traits>
->::type<T> {};
+>::type<T>;
 
 }  // namespace extended_detail
 
@@ -198,12 +198,12 @@ template <class T>
 using extending_t = typename extended_detail::extended_traits<T>::constructed;
 
 template <class T>
-decltype(auto) extending_arg(T&& value)
+decltype(auto) extended_arg(T&& value)
     { return extended_detail::extended_traits<T>::get_arg(forward<T>(value)); }
 
 template <class T>
 auto make_extended(T&& value)
-    { return extended<extending_t<T>>{extending_arg(forward<T>(value))}; }
+    { return extended<extending_t<T>>{extended_arg(forward<T>(value))}; }
 
 template <class T>
 auto make_extended_view(T&& value) {

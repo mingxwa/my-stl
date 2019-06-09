@@ -40,12 +40,12 @@ struct proxy_meta<Callable<R(Args...)>, E> {
  private:
   template <class T>
   static R callable_op_0(
-      E<qualification_type::none, reference_type::none> erased,
+      E<qualification_type::none, reference_type::lvalue> erased,
       Args&&... args) {
     return erased.template cast<T>()(forward<Args>(args)...);
   }
 
-  R (*callable_op_0_)(E<qualification_type::none, reference_type::none>,
+  R (*callable_op_0_)(E<qualification_type::none, reference_type::lvalue>,
       Args&&...);
 };
 
@@ -118,8 +118,8 @@ class proxy<Callable<R(Args...)>, A> : public A {
     return *this;
   }
 
-  R operator()(Args... args) {
-    return A::meta().callable_op_0_(A::data(), forward<Args>(args)...);
+  R operator()(Args... args) & {
+    return A::meta().callable_op_0_(A::erased(), forward<Args>(args)...);
   }
 };
 

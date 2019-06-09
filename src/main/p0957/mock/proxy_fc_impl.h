@@ -38,11 +38,11 @@ struct proxy_meta<FC, E> : proxy_meta<FA, E>, proxy_meta<FB, E> {
  private:
   template <class T>
   static void fc_op_0(
-      E<qualification_type::none, reference_type::none> erased) {
+      E<qualification_type::none, reference_type::lvalue> erased) {
     erased.template cast<T>().fun_c();
   }
 
-  void (*fc_op_0_)(E<qualification_type::none, reference_type::none>);
+  void (*fc_op_0_)(E<qualification_type::none, reference_type::lvalue>);
 };
 
 template <class A>
@@ -88,20 +88,20 @@ class proxy<FC, A> : public A {
     return *this;
   }
 
-  void fun_a_0() {
-    A::meta().fa_op_0_(A::data());
+  void fun_a_0() & {
+    A::meta().fa_op_0_(A::erased());
   }
 
-  int fun_a_1(double arg_0) {
-    return A::meta().fa_op_1_(A::data(), forward<double>(arg_0));
+  int fun_a_1(double arg_0) & {
+    return A::meta().fa_op_1_(A::erased(), forward<double>(arg_0));
   }
 
   void fun_b(value_proxy<FA> arg_0) {
     A::meta().fb_op_0_(forward<value_proxy<FA>>(arg_0));
   }
 
-  void fun_c() {
-    A::meta().fc_op_0_(A::data());
+  void fun_c() & {
+    A::meta().fc_op_0_(A::erased());
   }
 };
 
