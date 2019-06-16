@@ -52,8 +52,13 @@ class extended_value {
   template <class U>
   explicit constexpr extended_value(U&& value) : value_(forward<U>(value)) {}
 
+  constexpr extended_value(extended_reference<T&&>&& e) : value_(e.get()) {}
   constexpr extended_value(extended_value&&) = default;
   constexpr extended_value(const extended_value&) = default;
+  constexpr extended_value& operator=(extended_reference<T&&>&& e) {
+    value_ = e.get();
+    return *this;
+  }
   constexpr extended_value& operator=(extended_value&&) = default;
   constexpr extended_value& operator=(const extended_value&) = default;
 
@@ -200,10 +205,6 @@ using extending_t = typename extended_detail::extended_traits<T>::constructed;
 template <class T>
 decltype(auto) extended_arg(T&& value)
     { return extended_detail::extended_traits<T>::get_arg(forward<T>(value)); }
-
-template <class T>
-auto make_extended(T&& value)
-    { return extended<extending_t<T>>{extended_arg(forward<T>(value))}; }
 
 template <class T>
 auto make_extended_view(T&& value) {

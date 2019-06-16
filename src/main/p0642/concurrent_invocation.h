@@ -112,7 +112,7 @@ class concurrent_breakpoint {
   }
 
   void join_last() {
-    invoke(make_extended(move(cb_)).get(),
+    invoke(make_extended_view(move(cb_)).get(),
         concurrent_finalizer<CTX, E_CB, MA>{this});
   }
 
@@ -130,7 +130,6 @@ class concurrent_token {
  public:
   concurrent_token() = default;
   concurrent_token(concurrent_token&&) = default;
-
   concurrent_token& operator=(concurrent_token&&) = default;
 
   template <class CIU>
@@ -165,7 +164,6 @@ class concurrent_finalizer {
  public:
   concurrent_finalizer() = default;
   concurrent_finalizer(concurrent_finalizer&&) = default;
-
   concurrent_finalizer& operator=(concurrent_finalizer&&) = default;
 
   decltype(auto) context() const {
@@ -189,7 +187,7 @@ namespace ci_detail {
 
 template <class CT, class CTX, class E_CB, class MA, class = enable_if_t<
     is_invocable_v<CT, concurrent_finalizer<CTX, E_CB, MA>>>>
-struct invoke_continuation_with_finalizer_processor {
+struct invoke_continuation_with_finalizer_traits {
   static inline void apply(
       CT&& ct, concurrent_finalizer<CTX, E_CB, MA>&& finalizer)
       { invoke(forward<CT>(ct), move(finalizer)); }
@@ -197,7 +195,7 @@ struct invoke_continuation_with_finalizer_processor {
 
 template <class CT, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<CT, CTX>>>
-struct invoke_continuation_with_context_processor {
+struct invoke_continuation_with_context_traits {
   static inline void apply(
       CT&& ct, concurrent_finalizer<CTX, E_CB, MA> finalizer)
       { invoke(forward<CT>(ct), forward<CTX>(finalizer.context())); }
@@ -205,51 +203,32 @@ struct invoke_continuation_with_context_processor {
 
 template <class CT, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<CT>>>
-struct invoke_continuation_without_finalizer_processor {
+struct invoke_continuation_without_finalizer_traits {
   static inline void apply(
       CT&& ct, concurrent_finalizer<CTX, E_CB, MA>&& finalizer)
       { { auto f = move(finalizer); } invoke(forward<CT>(ct)); }
 };
 
-template <class CT, class CTX, class E_CB, class MA>
-void invoke_continuation(CT&& ct,
-    concurrent_finalizer<CTX, E_CB, MA>&& finalizer) {
-  applicable_template<
-      equal_templates<invoke_continuation_with_finalizer_processor>,
-      equal_templates<invoke_continuation_with_context_processor>,
-      equal_templates<invoke_continuation_without_finalizer_processor>
-  >::type<CT, CTX, E_CB, MA>::apply(forward<CT>(ct), move(finalizer));
-}
-
 template <class F, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<F, concurrent_token<CTX, E_CB, MA>>>>
-struct invoke_callable_with_token_processor {
+struct invoke_callable_with_token_traits {
   static inline void apply(F&& f, concurrent_token<CTX, E_CB, MA>&& token)
       { invoke(forward<F>(f), move(token)); }
 };
 
 template <class F, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<F, add_lvalue_reference_t<const CTX>>>>
-struct invoke_callable_with_context_processor {
+struct invoke_callable_with_context_traits {
   static inline void apply(F&& f, concurrent_token<CTX, E_CB, MA> token)
       { invoke(forward<F>(f), token.context()); }
 };
 
 template <class F, class CTX, class E_CB, class MA,
     class = enable_if_t<is_invocable_v<F>>>
-struct invoke_callable_without_token_processor {
+struct invoke_callable_without_token_traits {
   static inline void apply(F&& f, concurrent_token<CTX, E_CB, MA>)
       { invoke(forward<F>(f)); }
 };
-
-template <class F, class CTX, class E_CB, class MA>
-void invoke_callable(F&& f, concurrent_token<CTX, E_CB, MA>&& token) {
-  applicable_template<
-      equal_templates<invoke_callable_with_token_processor>,
-      equal_templates<invoke_callable_with_context_processor>,
-      equal_templates<invoke_callable_without_token_processor>
-  >::type<F, CTX, E_CB, MA>::apply(forward<F>(f), move(token));
-}
 
 }  // namespace ci_detail
 
@@ -265,7 +244,11 @@ class contextual_concurrent_callable {
       = default;
 
   void operator()() && {
-    ci_detail::invoke_callable(
+    applicable_template<
+        equal_templates<ci_detail::invoke_callable_with_token_traits>,
+        equal_templates<ci_detail::invoke_callable_with_context_traits>,
+        equal_templates<ci_detail::invoke_callable_without_token_traits>
+    >::type<extending_t<E_F>, CTX, E_CB, MA>::apply(
         make_extended_view(move(f_)).get(), move(token_));
   }
 
@@ -309,8 +292,12 @@ class contextual_concurrent_callback {
       = default;
 
   void operator()() && {
-    ci_detail::invoke_continuation(make_extended_view(move(ct_)).get(),
-        move(finalizer_));
+    applicable_template<
+        equal_templates<ci_detail::invoke_continuation_with_finalizer_traits>,
+        equal_templates<ci_detail::invoke_continuation_with_context_traits>,
+        equal_templates<ci_detail::invoke_continuation_without_finalizer_traits>
+    >::type<extending_t<E_CT>, CTX, E_CB, MA>::apply(
+        make_extended_view(move(ct_)).get(), move(finalizer_));
   }
 
  private:
@@ -380,7 +367,7 @@ class promise_callback<void> {
 
 template <class CIU, class E_CTX, class E_CB, class E_MA>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb, E_MA&& ma) {
-  auto extended_ma = make_extended(ma);
+  auto extended_ma = make_extended_view(forward<E_MA>(ma));
   auto* bp = aid::construct<concurrent_breakpoint<
       extending_t<E_CTX>, decay_t<E_CB>, extending_t<E_MA>>>(extended_ma.get(),
       extended_arg(forward<E_CTX>(ctx)), forward<E_CB>(cb), move(extended_ma));

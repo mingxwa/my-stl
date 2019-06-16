@@ -281,7 +281,7 @@ class value_addresser {
   void init_large(E_T&& value, E_MA&& ma) {
     using T = extending_t<E_T>;
     using MA = extending_t<E_MA>;
-    extended<MA> ema = make_extended(forward<E_MA>(ma));
+    extended<MA> ema = make_extended_view(forward<E_MA>(ma));
     storage_.ptr_ = aid::construct<allocated_value<T, MA>>(
         ema.get(), extended_arg(forward<E_T>(value)), move(ema));
     meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T, MA>;
