@@ -80,27 +80,29 @@ class null_value_addresser_error : public logic_error {
 };
 
 template <class T, class MA>
-struct allocated_value : extended<T> {
+struct allocated_value {
   template <class _T>
-  explicit allocated_value(_T&& value, extended<MA>&& ma)
-      : extended<T>(forward<_T>(value)), ma_(move(ma)) {}
+  explicit allocated_value(_T&& value, MA&& ma)
+      : value_(make_extended(forward<_T>(value))), ma_(move(ma)) {}
 
-  extended<MA> ma_;
+  T value_;
+  MA ma_;
 };
 
 namespace erased_detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
-inline constexpr bool VALUE_USES_SBO = sizeof(extended<T>) <= SIZE
-    && alignof(extended<T>) <= ALIGN && is_trivially_relocatable_v<T>;
+inline constexpr bool VALUE_USES_SBO = sizeof(T) <= SIZE
+    && alignof(T) <= ALIGN && is_trivially_relocatable_v<T>;
 
 template <size_t SIZE, size_t ALIGN>
 union value_storage {
-  aligned_storage_t<SIZE, ALIGN> value_;
+  alignas(ALIGN) char value_[SIZE];
   void* ptr_;
 };
 
-template <qualification_type Q>
+template <qualification_type Q, reference_type R, class = enable_if_t<
+    R == reference_type::lvalue>>
 class erased_reference_impl {
  public:
   erased_reference_impl(add_qualification_t<void, Q>* p) : p_(p) {}
@@ -124,14 +126,14 @@ class erased_value_impl {
 
   template <class T>
   add_reference_t<add_qualification_t<T, Q>, R> cast() const {
-    using U = add_qualification_t<extended<T>, Q>;
+    using U = add_qualification_t<T, Q>;
     add_qualification_t<void, Q>* p;
     if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
       p = &storage_.value_;
     } else {
       p = storage_.ptr_;
     }
-    return forward<add_reference_t<U, R>>(*static_cast<U*>(p)).get();
+    return forward<add_reference_t<U, R>>(*static_cast<U*>(p));
   }
 
  private:
@@ -140,9 +142,8 @@ class erased_value_impl {
 
 }  // namespace erased_detail
 
-template <qualification_type Q, reference_type R, class = enable_if_t<
-    R == reference_type::lvalue>>
-using erased_reference = erased_detail::erased_reference_impl<Q>;
+template <qualification_type Q, reference_type R>
+using erased_reference = erased_detail::erased_reference_impl<Q, R>;
 
 template <size_t SIZE, size_t ALIGN>
 struct erased_value_selector {
@@ -176,13 +177,13 @@ struct reference_meta<M, false> {
 
 template <class T>
 void destroy_small_value(void* erased)
-    { static_cast<extended<T>*>(erased)->~extended(); }
+    { static_cast<T*>(erased)->~T(); }
 
 template <class T, class MA>
 void destroy_large_value(void* erased) {
   allocated_value<T, MA>* p = *static_cast<allocated_value<T, MA>**>(erased);
-  extended<MA> ma = move(p->ma_);
-  aid::destroy(move(ma).get(), p);
+  MA ma = move(p->ma_);
+  aid::destroy(move(ma), p);
 }
 
 template <class T> const type_info& get_type() { return typeid(T); }
@@ -273,7 +274,7 @@ class value_addresser {
   template <class E_T>
   void init_small(E_T&& value) {
     using T = extending_t<E_T>;
-    new(&storage_.value_) extended<T>(extended_arg(forward<E_T>(value)));
+    new(&storage_.value_) T(make_extended(forward<E_T>(value)));
     meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
   }
 
@@ -281,9 +282,9 @@ class value_addresser {
   void init_large(E_T&& value, E_MA&& ma) {
     using T = extending_t<E_T>;
     using MA = extending_t<E_MA>;
-    extended<MA> ema = make_extended_view(forward<E_MA>(ma));
+    decltype(auto) ema = make_extended(forward<E_MA>(ma));
     storage_.ptr_ = aid::construct<allocated_value<T, MA>>(
-        ema.get(), extended_arg(forward<E_T>(value)), move(ema));
+        ema, forward<E_T>(value), forward<decltype(ema)>(ema));
     meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T, MA>;
   }
 

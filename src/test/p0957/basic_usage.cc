@@ -26,7 +26,7 @@ class Indicator {
     printf("Indicator %d: Destruct\n", ID);
   }
 
-  void operator()() { printf("%d\n", ID); }
+  void hint() { printf("%d\n", ID); }
 
  private:
   static int tot_id_;
