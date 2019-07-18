@@ -205,166 +205,62 @@ class concurrent_finalizer {
   unique_ptr<bp_detail::breakpoint<CTX, E_CB>> bp_;
 };
 
-namespace ci_detail {
-
-template <class CT, class CTX, class E_CB, class = enable_if_t<
-    is_invocable_v<CT, concurrent_finalizer<CTX, E_CB>>>>
-struct invoke_continuation_with_finalizer_traits {
-  static inline void apply(
-      CT&& ct, concurrent_finalizer<CTX, E_CB>&& finalizer)
-      { invoke(forward<CT>(ct), move(finalizer)); }
-};
-
-template <class CT, class CTX, class E_CB,
-    class = enable_if_t<is_invocable_v<CT, CTX>>>
-struct invoke_continuation_with_context_traits {
-  static inline void apply(
-      CT&& ct, concurrent_finalizer<CTX, E_CB> finalizer)
-      { invoke(forward<CT>(ct), forward<CTX>(finalizer.context())); }
-};
-
-template <class CT, class CTX, class E_CB,
-    class = enable_if_t<is_invocable_v<CT>>>
-struct invoke_continuation_without_finalizer_traits {
-  static inline void apply(
-      CT&& ct, concurrent_finalizer<CTX, E_CB>&& finalizer)
-      { { auto f = move(finalizer); } invoke(forward<CT>(ct)); }
-};
-
-template <class F, class CTX, class E_CB,
-    class = enable_if_t<is_invocable_v<F, concurrent_token<CTX, E_CB>&>>>
-struct invoke_callable_with_token_traits {
-  static inline void apply(F&& f, concurrent_token<CTX, E_CB>* token)
-      { invoke(forward<F>(f), *token); }
-};
-
-template <class F, class CTX, class E_CB,
-    class = enable_if_t<is_invocable_v<F, const CTX&>>>
-struct invoke_callable_with_context_traits {
-  static inline void apply(F&& f, concurrent_token<CTX, E_CB>* token)
-      { invoke(forward<F>(f), token->context()); }
-};
-
-template <class F, class CTX, class E_CB,
-    class = enable_if_t<is_invocable_v<F>>>
-struct invoke_callable_without_token_traits {
-  static inline void apply(F&& f, concurrent_token<CTX, E_CB>*)
-      { invoke(forward<F>(f)); }
-};
-
-}  // namespace ci_detail
-
-template <class E_F, class CTX, class E_CB>
-class contextual_concurrent_callable {
- public:
-  explicit contextual_concurrent_callable(E_F&& f,
-      concurrent_token<CTX, E_CB>&& token)
-      : f_(move(f)), token_(move(token)) {}
-
-  contextual_concurrent_callable(contextual_concurrent_callable&&) = default;
-  contextual_concurrent_callable& operator=(contextual_concurrent_callable&&)
-      = default;
-
-  void operator()() && {
-    concurrent_token<CTX, E_CB> token = move(token_);
-    try {
-      applicable_template<
-          equal_templates<ci_detail::invoke_callable_with_token_traits>,
-          equal_templates<ci_detail::invoke_callable_with_context_traits>,
-          equal_templates<ci_detail::invoke_callable_without_token_traits>
-      >::type<extending_t<E_F>, CTX, E_CB>::apply(
-          make_extended(move(f_)), &token);
-    } catch (...) {
-      token.set_exception(current_exception());
-    }
-  }
-
- private:
-  E_F f_;
-  concurrent_token<CTX, E_CB> token_;
-};
-
-template <class E_E, class E_F>
-class concurrent_callable {
- public:
-  template <class _E_E, class _E_F>
-  explicit concurrent_callable(_E_E&& e, _E_F&& f)
-      : e_(forward<_E_E>(e)), f_(forward<_E_F>(f)) {}
-
-  concurrent_callable(const concurrent_callable&) = default;
-  concurrent_callable(concurrent_callable&&) = default;
-  concurrent_callable& operator=(const concurrent_callable&) = default;
-  concurrent_callable& operator=(concurrent_callable&&) = default;
-
-  template <class CTX, class E_CB>
-  void operator()(concurrent_token<CTX, E_CB>&& token) && {
-    make_extended(move(e_)).execute(contextual_concurrent_callable<
-        E_F, CTX, E_CB>{move(f_), move(token)});
-  }
-
- private:
-  E_E e_;
-  E_F f_;
-};
-
-template <class E_CT, class CTX, class E_CB>
-class contextual_concurrent_callback {
- public:
-  explicit contextual_concurrent_callback(E_CT&& ct,
-      concurrent_finalizer<CTX, E_CB>&& finalizer)
-      : ct_(move(ct)), finalizer_(move(finalizer)) {}
-
-  contextual_concurrent_callback(contextual_concurrent_callback&&) = default;
-  contextual_concurrent_callback& operator=(contextual_concurrent_callback&&)
-      = default;
-
-  void operator()() && {
-    applicable_template<
-        equal_templates<ci_detail::invoke_continuation_with_finalizer_traits>,
-        equal_templates<ci_detail::invoke_continuation_with_context_traits>,
-        equal_templates<ci_detail::invoke_continuation_without_finalizer_traits>
-    >::type<extending_t<E_CT>, CTX, E_CB>::apply(
-        make_extended(move(ct_)), move(finalizer_));
-  }
-
- private:
-  E_CT ct_;
-  concurrent_finalizer<CTX, E_CB> finalizer_;
-};
-
-template <class E_E, class E_CT>
-class concurrent_callback {
- public:
-  template <class _E_E, class _E_CT>
-  explicit concurrent_callback(_E_E&& e, _E_CT&& ct)
-      : e_(forward<_E_E>(e)), ct_(forward<_E_CT>(ct)) {}
-
-  concurrent_callback(const concurrent_callback&) = default;
-  concurrent_callback(concurrent_callback&&) = default;
-  concurrent_callback& operator=(const concurrent_callback&) = default;
-  concurrent_callback& operator=(concurrent_callback&&) = default;
-
-  template <class CTX, class E_CB>
-  void operator()(concurrent_finalizer<CTX, E_CB>&& finalizer) && {
-    make_extended(move(e_)).execute(contextual_concurrent_callback<
-        E_CT, CTX, E_CB>{move(ct_), move(finalizer)});
-  }
-
- private:
-  E_E e_;
-  E_CT ct_;
-};
-
 template <class E_E, class E_F>
 auto make_concurrent_callable(E_E&& e, E_F&& f) {
-  return concurrent_callable<decay_t<E_E>, decay_t<E_F>>(
-      forward<E_E>(e), forward<E_F>(f));
+  using F = extending_t<E_F>;
+  return [e = forward<E_E>(e), f = forward<E_F>(f)](auto&& token) mutable {
+    make_extended(move(e)).execute([f = move(f), token = move(token)]()
+        mutable {
+      auto tk = move(token);
+      try {
+        if constexpr (is_invocable_v<F, decltype(tk)&>) {
+          invoke(make_extended(move(f)), tk);
+        } else if constexpr (is_invocable_v<F, decltype(tk.context())>) {
+          invoke(make_extended(move(f)), tk.context());
+        } else if constexpr (is_invocable_v<F>) {
+          invoke(make_extended(move(f)));
+        } else {
+          STATIC_ASSERT_FALSE(E_E);
+        }
+      } catch (...) {
+        tk.set_exception(current_exception());
+      }
+    });
+  };
+}
+
+template <class E_E, class E_CT, class E_EH>
+auto make_concurrent_callback(E_E&& e, E_CT&& ct, E_EH&& eh) {
+  using CT = extending_t<E_CT>;
+  return [e = forward<E_E>(e), ct = forward<E_CT>(ct), eh = forward<E_EH>(eh)](
+      auto&& finalizer) mutable {
+    make_extended(move(e)).execute([ct = move(ct), eh = move(eh),
+        finalizer = move(finalizer)]() mutable {
+      auto fl = move(finalizer);
+      try {
+        fl.context();
+      } catch (const concurrent_invocation_error<
+          decay_t<decltype(fl.context())>>& ex) {
+        invoke(make_extended(move(eh)), ex);
+        return;
+      }
+      if constexpr (is_invocable_v<CT, decltype(fl)>) {
+        invoke(make_extended(move(ct)), fl);
+      } else if constexpr (is_invocable_v<CT, decltype(move(fl.context()))>) {
+        invoke(make_extended(move(ct)), move(fl.context()));
+      } else if constexpr (is_invocable_v<CT>) {
+        invoke(make_extended(move(ct)));
+      } else {
+        STATIC_ASSERT_FALSE(E_E);
+      }
+    });
+  };
 }
 
 template <class E_E, class E_CT>
 auto make_concurrent_callback(E_E&& e, E_CT&& ct) {
-  return concurrent_callback<decay_t<E_E>, decay_t<E_CT>>(
-      forward<E_E>(e), forward<E_CT>(ct));
+  return make_concurrent_callback(forward<E_E>(e), forward<E_CT>(ct),
+      [](auto&&) { throw; });
 }
 
 template <class CTX>

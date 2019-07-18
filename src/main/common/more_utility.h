@@ -13,6 +13,8 @@
 #include "./more_type_traits.h"
 #include "../p1649/applicable_template.h"
 
+#define STATIC_ASSERT_FALSE(...) static_assert(sizeof(__VA_ARGS__) == 0)
+
 namespace aid {
 
 template <class T, class MA, class... Args>
