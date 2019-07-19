@@ -32,16 +32,16 @@ struct contextual_data {
 int main() {
   std::thread_executor e;
 
-  auto ciu = std::make_tuple(
-    std::make_concurrent_callable(e, [](const contextual_data& cd) {
+  auto ciu = std::tuple{
+    std::async_concurrent_callable(e, [](const contextual_data& cd) {
       cd.result_of_library_a = call_library_a();
     }),
-    std::make_concurrent_callable(e, [](const contextual_data& cd) {
+    std::async_concurrent_callable(e, [](const contextual_data& cd) {
       cd.result_of_library_b = call_library_b();
-    }));
+    })};
 
-  auto cb = std::make_concurrent_callback(
-      e, [](contextual_data&& data) { data.print(); });
+  auto cb = std::async_concurrent_callback{
+      e, [](contextual_data&& data) { data.print(); }};
 
   std::concurrent_invoke(std::move(ciu), std::in_place_type<contextual_data>,
       std::move(cb));

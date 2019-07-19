@@ -202,16 +202,22 @@ class concurrent_finalizer {
 };
 
 template <class E_E, class E_F>
-auto make_concurrent_callable(E_E&& e, E_F&& f) {
-  using F = extending_t<E_F>;
-  return [e = forward<E_E>(e), f = forward<E_F>(f)](auto&& token) mutable {
-    make_extended(move(e)).execute([f = move(f), token = move(token)]()
+class async_concurrent_callable {
+ public:
+  template <class _E_E, class _E_F>
+  explicit async_concurrent_callable(_E_E&& e, _E_F&& f)
+      : e_(forward<E_E>(e)), f_(forward<E_F>(f)) {}
+
+  template <class CTX, class E_CB>
+  void operator()(concurrent_token<CTX, E_CB>&& token) {
+    using F = extending_t<E_F>;
+    make_extended(move(e_)).execute([f = move(f_), token = move(token)]()
         mutable {
       auto tk = move(token);
       try {
-        if constexpr (is_invocable_v<F, decltype(tk)&>) {
+        if constexpr (is_invocable_v<F, concurrent_token<CTX, E_CB>&>) {
           invoke(make_extended(move(f)), tk);
-        } else if constexpr (is_invocable_v<F, decltype(tk.context())>) {
+        } else if constexpr (is_invocable_v<F, const CTX&>) {
           invoke(make_extended(move(f)), tk.context());
         } else if constexpr (is_invocable_v<F>) {
           invoke(make_extended(move(f)));
@@ -222,15 +228,34 @@ auto make_concurrent_callable(E_E&& e, E_F&& f) {
         tk.set_exception(current_exception());
       }
     });
-  };
-}
+  }
+
+ private:
+  E_E e_;
+  E_F f_;
+};
+
+template <class _E_E, class _E_F>
+async_concurrent_callable(_E_E&&, _E_F&&)
+    -> async_concurrent_callable<decay_t<_E_E>, decay_t<_E_F>>;
 
 template <class E_E, class E_CT, class E_EH>
-auto make_concurrent_callback(E_E&& e, E_CT&& ct, E_EH&& eh) {
-  using CT = extending_t<E_CT>;
-  return [e = forward<E_E>(e), ct = forward<E_CT>(ct), eh = forward<E_EH>(eh)](
-      auto&& finalizer) mutable {
-    make_extended(move(e)).execute([ct = move(ct), eh = move(eh),
+class async_concurrent_callback {
+ public:
+  template <class _E_E, class _E_CT, class _E_EH>
+  explicit async_concurrent_callback(_E_E&& e, _E_CT&& ct, _E_EH&& eh)
+      : e_(forward<_E_E>(e)), ct_(forward<_E_CT>(ct_)),
+        eh_(forward<_E_EH>(eh)) {}
+
+  template <class _E_E, class _E_CT>
+  explicit async_concurrent_callback(_E_E&& e, _E_CT&& ct)
+      : async_concurrent_callback(
+          forward<_E_E>(e), forward<_E_CT>(ct_), E_EH{}) {}
+
+  template <class CTX, class E_CB>
+  void operator()(concurrent_finalizer<CTX, E_CB>&& finalizer) {
+    using CT = extending_t<E_CT>;
+    make_extended(move(e_)).execute([ct = move(ct_), eh = move(eh_),
         finalizer = move(finalizer)]() mutable {
       auto fl = move(finalizer);
       try {
@@ -239,9 +264,9 @@ auto make_concurrent_callback(E_E&& e, E_CT&& ct, E_EH&& eh) {
         invoke(make_extended(move(eh)), ex);
         return;
       }
-      if constexpr (is_invocable_v<CT, decltype(fl)>) {
+      if constexpr (is_invocable_v<CT, concurrent_finalizer<CTX, E_CB>>) {
         invoke(make_extended(move(ct)), fl);
-      } else if constexpr (is_invocable_v<CT, decltype(move(fl.context()))>) {
+      } else if constexpr (is_invocable_v<CT, CTX>) {
         invoke(make_extended(move(ct)), move(fl.context()));
       } else if constexpr (is_invocable_v<CT>) {
         invoke(make_extended(move(ct)));
@@ -249,14 +274,26 @@ auto make_concurrent_callback(E_E&& e, E_CT&& ct, E_EH&& eh) {
         STATIC_ASSERT_FALSE(E_E);
       }
     });
-  };
-}
+  }
 
-template <class E_E, class E_CT>
-auto make_concurrent_callback(E_E&& e, E_CT&& ct) {
-  return make_concurrent_callback(forward<E_E>(e), forward<E_CT>(ct),
-      [](auto&&) { throw; });
-}
+ private:
+  E_E e_;
+  E_CT ct_;
+  E_EH eh_;
+};
+
+template <class _E_E, class _E_CT, class _E_EH>
+async_concurrent_callback(_E_E&&, _E_CT&&, _E_EH&&)
+    -> async_concurrent_callback<decay_t<_E_E>, decay_t<_E_CT>, decay_t<_E_EH>>;
+
+struct throwing_concurrent_exception_handler {
+  void operator()(const concurrent_invocation_error&) { throw; }
+};
+
+template <class _E_E, class _E_CT>
+async_concurrent_callback(_E_E&&, _E_CT&&)
+    -> async_concurrent_callback<
+        decay_t<_E_E>, decay_t<_E_CT>, throwing_concurrent_exception_handler>;
 
 template <class CIU, class E_CTX, class E_CB>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb) {
