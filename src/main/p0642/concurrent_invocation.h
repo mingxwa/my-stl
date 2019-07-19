@@ -30,23 +30,19 @@ class invalid_concurrent_invocation_context : public logic_error {
       : logic_error("Invalid concurrent invocation context") {}
 };
 
-template <class CTX>
 class concurrent_invocation_error : public runtime_error {
  public:
-  explicit concurrent_invocation_error(CTX* ctx, vector<exception_ptr> nested)
+  explicit concurrent_invocation_error(vector<exception_ptr> nested)
       : runtime_error(
             "There are nested exceptions in current concurrent invocation"),
-        ctx_(ctx), nested_(move(nested)) {}
+        nested_(move(nested)) {}
   concurrent_invocation_error(const concurrent_invocation_error&) = default;
   concurrent_invocation_error& operator=(const concurrent_invocation_error&)
       = default;
 
   const vector<exception_ptr>& get_nested() const noexcept { return nested_; }
 
-  CTX& context() const noexcept { return *ctx_; }
-
  private:
-  CTX* ctx_;
   const vector<exception_ptr> nested_;
 };
 
@@ -193,7 +189,7 @@ class concurrent_finalizer {
     if (!exceptions.empty()) {
       vector<exception_ptr> ev;
       exceptions.collect(ev);
-      throw concurrent_invocation_error{&bp_->ctx_, move(ev)};
+      throw concurrent_invocation_error{move(ev)};
     }
     return bp_->ctx_;
   }
@@ -239,8 +235,7 @@ auto make_concurrent_callback(E_E&& e, E_CT&& ct, E_EH&& eh) {
       auto fl = move(finalizer);
       try {
         fl.context();
-      } catch (const concurrent_invocation_error<
-          decay_t<decltype(fl.context())>>& ex) {
+      } catch (const concurrent_invocation_error& ex) {
         invoke(make_extended(move(eh)), ex);
         return;
       }
@@ -263,31 +258,6 @@ auto make_concurrent_callback(E_E&& e, E_CT&& ct) {
       [](auto&&) { throw; });
 }
 
-template <class CTX>
-class promise_callback {
- public:
-  explicit promise_callback(promise<CTX>&& p) noexcept : p_(move(p)) {}
-
-  template <class E_CB>
-  void operator()(concurrent_finalizer<CTX, E_CB>&& finalizer) &&
-      { p_.set_value(move(finalizer.context())); }
-
- private:
-  promise<CTX> p_;
-};
-
-template <>
-class promise_callback<void> {
- public:
-  explicit promise_callback(promise<void>&& p) noexcept : p_(move(p)) {}
-
-  template <class CTX, class E_CB>
-  void operator()(concurrent_finalizer<CTX, E_CB>&&) && { p_.set_value(); }
-
- private:
-  promise<void> p_;
-};
-
 template <class CIU, class E_CTX, class E_CB>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb) {
   auto* bp = new bp_detail::breakpoint<extending_t<E_CTX>, decay_t<E_CB>>(
@@ -307,10 +277,21 @@ decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx) {
   using R = conditional_t<
       is_move_constructible_v<extending_t<E_CTX>>, extending_t<E_CTX>, void>;
   promise<R> p;
-  future<R> result = p.get_future();
   concurrent_invoke(forward<CIU>(ciu), forward<E_CTX>(ctx),
-      promise_callback<R>{move(p)});
-  return result;
+      [p = move(p)](auto&& token) mutable {
+    try {
+      token.context();
+    } catch (const concurrent_invocation_error& ex) {
+      p.set_error(current_exception());
+      return;
+    }
+    if constexpr (is_same_v<R, void>) {
+      p.set_value();
+    } else {
+      p.set_value(move(token.context()));
+    }
+  });
+  return p.get_future();
 }
 
 class thread_executor {
