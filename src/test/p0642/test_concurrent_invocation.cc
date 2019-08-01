@@ -20,8 +20,8 @@ ResultTypeB call_library_b() {
 }
 
 struct contextual_data {
-  mutable ResultTypeA result_of_library_a;
-  mutable ResultTypeB result_of_library_b;
+  ResultTypeA result_of_library_a;
+  ResultTypeB result_of_library_b;
 
   void print() {
     printf("A: %d, B: %s\n", result_of_library_a.value,
@@ -30,13 +30,13 @@ struct contextual_data {
 };
 
 int main() {
-  std::thread_executor e;
+  aid::thread_executor e;
 
   auto ciu = std::tuple{
-    std::async_concurrent_callable(e, [](const contextual_data& cd) {
+    std::async_concurrent_callable(e, [](contextual_data& cd) {
       cd.result_of_library_a = call_library_a();
     }),
-    std::async_concurrent_callable(e, [](const contextual_data& cd) {
+    std::async_concurrent_callable(e, [](contextual_data& cd) {
       cd.result_of_library_b = call_library_b();
     })};
 

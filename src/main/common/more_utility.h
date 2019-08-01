@@ -11,7 +11,6 @@
 #include <functional>
 
 #include "./more_type_traits.h"
-#include "../p1649/applicable_template.h"
 
 #define STATIC_ASSERT_FALSE(...) static_assert(sizeof(__VA_ARGS__) == 0)
 
@@ -39,56 +38,22 @@ void destroy(MA&& ma, T* p) {
   ma.template deallocate<sizeof(T), alignof(T)>(p);
 }
 
-namespace for_each_in_tuple_detail {
-
-template <std::size_t I, class Tuple, class F>
-void for_each_in_tuple_helper(Tuple&& tp, F&& f);
-
-template <class Index, class Tuple, class F, class = std::enable_if_t<
-    Index::value == std::tuple_size_v<std::remove_reference_t<Tuple>>>>
-struct for_each_in_tuple_boundary_processor
-    { static inline void apply(Tuple&&, F&&) noexcept {} };
-
-template <class Index, class Tuple, class F, class = std::enable_if_t<
-    std::is_invocable_v<
-        F, decltype(std::get<Index::value>(std::declval<Tuple>())), Index>>>
-struct for_each_in_tuple_with_index_processor {
-  static inline void apply(Tuple&& tp, F&& f) {
-    std::invoke(std::forward<F>(f), std::get<Index::value>(
-        std::forward<Tuple>(tp)), Index{});
-    for_each_in_tuple_helper<Index::value + 1u>(
-        std::forward<Tuple>(tp), std::forward<F>(f));
+template <std::size_t I = 0u, class TP, class F>
+void for_each_in_tuple(TP&& tp, F&& f) {
+  if constexpr (I != std::tuple_size_v<std::remove_reference_t<TP>>) {
+    if constexpr (std::is_invocable_v<
+        F, decltype(std::get<I>(std::declval<TP>())),
+        std::integral_constant<std::size_t, I>>) {
+      std::invoke(std::forward<F>(f), std::get<I>(
+          std::forward<TP>(tp)), std::integral_constant<std::size_t, I>{});
+    } else if constexpr (std::is_invocable_v<
+        F, decltype(std::get<I>(std::declval<TP>()))>) {
+      std::invoke(std::forward<F>(f), std::get<I>(std::forward<TP>(tp)));
+    } else {
+      STATIC_ASSERT_FALSE(TP);
+    }
+    for_each_in_tuple<I + 1u>(std::forward<TP>(tp), std::forward<F>(f));
   }
-};
-
-template <class Index, class Tuple, class F, class = std::enable_if_t<
-    std::is_invocable_v<
-        F, decltype(std::get<Index::value>(std::declval<Tuple>()))>>>
-struct for_each_in_tuple_without_index_processor {
-  static inline void apply(Tuple&& tp, F&& f) {
-    std::invoke(std::forward<F>(f),
-        std::get<Index::value>(std::forward<Tuple>(tp)));
-    for_each_in_tuple_helper<Index::value + 1u>(
-        std::forward<Tuple>(tp), std::forward<F>(f));
-  }
-};
-
-template <std::size_t I, class Tuple, class F>
-void for_each_in_tuple_helper(Tuple&& tp, F&& f) {
-  std::applicable_template<
-      std::equal_templates<for_each_in_tuple_boundary_processor>,
-      std::equal_templates<for_each_in_tuple_with_index_processor>,
-      std::equal_templates<for_each_in_tuple_without_index_processor>
-  >::type<std::integral_constant<std::size_t, I>, Tuple, F>
-      ::apply(std::forward<Tuple>(tp), std::forward<F>(f));
-}
-
-}  // namespace for_each_in_tuple_detail
-
-template <class Tuple, class F>
-void for_each_in_tuple(Tuple&& tp, F&& f) {
-  for_each_in_tuple_detail::for_each_in_tuple_helper<0u>(
-      std::forward<Tuple>(tp), std::forward<F>(f));
 }
 
 template <class Container, class F>
@@ -103,54 +68,51 @@ void for_each_in_container(Container&& c, F&& f) {
   }
 }
 
-namespace for_each_in_aggregation_detail {
-
 template <class T, class F>
-void for_each_impl(T&& value, F&& f);
+void for_each_in_aggregation(T&& value, F&& f);
+
+namespace for_each_detail {
 
 template <class F>
 struct applier {
   template <class T>
   void operator()(T&& value) const
-      { for_each_impl(std::forward<T>(value), std::forward<F>(f_)); }
+      { for_each_in_aggregation(std::forward<T>(value), std::forward<F>(f_)); }
 
   F&& f_;
 };
 
-template <class T, class F, class = std::enable_if_t<is_tuple_v<T>>>
-struct tuple_traits {
+template <class SFINAE, class T, class F>
+struct sfinae_for_each_traits;
+
+template <class T, class F>
+struct sfinae_for_each_traits<std::enable_if_t<is_tuple_v<T>>, T, F> {
   static inline void apply(T&& value, F&& f) {
     for_each_in_tuple(std::forward<T>(value), applier<F>{std::forward<F>(f)});
   }
 };
 
-template <class T, class F, class = std::enable_if_t<is_container_v<T>>>
-struct container_traits {
+template <class T, class F>
+struct sfinae_for_each_traits<std::enable_if_t<is_container_v<T>>, T, F> {
   static inline void apply(T&& value, F&& f) {
     for_each_in_container(std::forward<T>(value),
         applier<F>{std::forward<F>(f)});
   }
 };
 
-template <class T, class F, class = std::enable_if_t<std::is_invocable_v<F, T>>>
-struct singleton_traits {
+template <class T, class F>
+struct sfinae_for_each_traits<
+    std::enable_if_t<std::is_invocable_v<F, T>>, T, F> {
   static inline void apply(T&& value, F&& f)
       { std::invoke(std::forward<F>(f), std::forward<T>(value)); }
 };
 
-template <class T, class F>
-void for_each_impl(T&& value, F&& f) {
-  std::applicable_template<
-      std::equal_templates<tuple_traits, container_traits, singleton_traits>>
-      ::type<T, F>::apply(std::forward<T>(value), std::forward<F>(f));
-}
-
-}  // namespace for_each_in_aggregation_detail
+}  // namespace for_each_detail
 
 template <class T, class F>
 void for_each_in_aggregation(T&& value, F&& f) {
-  for_each_in_aggregation_detail::for_each_impl(
-      std::forward<T>(value), std::forward<F>(f));
+  for_each_detail::sfinae_for_each_traits<void, T, F>
+      ::apply(std::forward<T>(value), std::forward<F>(f));
 }
 
 }  // namespace aid

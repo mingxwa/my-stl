@@ -9,15 +9,11 @@
 #include <stdexcept>
 #include <exception>
 #include <vector>
-#include <deque>
 #include <tuple>
 #include <memory>
 #include <atomic>
-#include <thread>
 #include <future>
-#include <mutex>
 
-#include "../p1649/applicable_template.h"
 #include "../p1648/extended.h"
 #include "../common/more_utility.h"
 #include "../common/more_concurrency.h"
@@ -43,92 +39,86 @@ class concurrent_invocation_error : public runtime_error {
   const vector<exception_ptr>& get_nested() const noexcept { return nested_; }
 
  private:
-  const vector<exception_ptr> nested_;
+  vector<exception_ptr> nested_;
 };
 
-template <class CTX, class E_CB>
-class concurrent_token;
-
-template <class CTX, class E_CB>
-class concurrent_finalizer;
-
-template <class CIU, class E_CTX, class E_CB>
-void concurrent_invoke(CIU&&, E_CTX&&, E_CB&&);
+template <class CTX, class E_CB> class concurrent_token;
+template <class CTX, class E_CB> class concurrent_finalizer;
 
 namespace bp_detail {
 
 template <class CTX, class E_CB>
-struct breakpoint;
-
-template <class CTX, class E_CB>
-auto make_token(const breakpoint<CTX, E_CB>* bp)
-    { return concurrent_token<CTX, E_CB>{bp}; }
-
-template <class CTX, class E_CB>
-struct ciu_size_statistics {
-  template <class CIU, class = enable_if_t<
-      is_invocable_v<CIU, concurrent_token<CTX, E_CB>>>>
-  void operator()(CIU&&) { ++value; }
-
-  size_t value = 0u;
-};
-
-template <class CTX, class E_CB>
-struct ciu_caller {
-  template <class CIU, class = enable_if_t<
-      is_invocable_v<CIU, concurrent_token<CTX, E_CB>>>>
-  void operator()(CIU&& ciu) {
-    invoke(forward<CIU>(ciu), make_token(bp_));
-    --*remain_;
+class breakpoint {
+ public:
+  template <class CIU, class E_CTX, class _E_CB>
+  explicit breakpoint(CIU&& ciu, E_CTX&& ctx, _E_CB&& cb)
+      : ctx_(make_extended(forward<E_CTX>(ctx))), cb_(forward<_E_CB>(cb)) {
+    size_t total = count(forward<CIU>(ciu));
+    if (total == 0u) {
+      join_last();
+    } else {
+      atomic_init(&detached_, total);
+      call(forward<CIU>(ciu));
+    }
   }
-
-  const breakpoint<CTX, E_CB>* bp_;
-  size_t* remain_;
-};
-
-template <class CTX, class E_CB, class CIU>
-size_t ciu_size(CIU&& ciu) {
-  ciu_size_statistics<CTX, E_CB> statistics;
-  aid::for_each_in_aggregation(forward<CIU>(ciu), statistics);
-  return statistics.value;
-}
-
-template <class CTX, class E_CB>
-struct breakpoint {
-  template <class E_CTX, class _E_CB>
-  explicit breakpoint(E_CTX&& ctx, _E_CB&& cb)
-      : ctx_(make_extended(forward<E_CTX>(ctx))), cb_(forward<_E_CB>(cb)) {}
 
   template <class CIU>
-  void call(CIU&& ciu, size_t remain) const {
-    try {
-      aid::for_each_in_aggregation(forward<CIU>(ciu),
-          bp_detail::ciu_caller<CTX, E_CB>{this, &remain});
-    } catch (...) {
-      join(remain);
-      throw;
+  void fork(CIU&& ciu) {
+    detached_.fetch_add(count(forward<CIU>(ciu)), memory_order_relaxed);
+    call(forward<CIU>(ciu));
+  }
+
+  void join() {
+    if (detached_.fetch_sub(1u, memory_order_release) == 1u) {
+      atomic_thread_fence(memory_order_acquire);
+      join_last();
     }
   }
 
-  void join(size_t count) const {
-    if (count_.fetch_sub(count, memory_order_release) == count) {
-      atomic_thread_fence(memory_order_acquire);
-      const_cast<breakpoint*>(this)->join_last();
-    }
+  aid::concurrent_collector<exception_ptr>& exceptions() { return exceptions_; }
+  add_lvalue_reference_t<CTX> context()
+      { if constexpr (!is_void_v<CTX>) { return ctx_; } }
+
+ private:
+  struct ciu_size_statistics {
+    template <class CIU, class = enable_if_t<
+        is_nothrow_invocable_v<CIU, concurrent_token<CTX, E_CB>>>>
+    void operator()(CIU&&) { ++value; }
+    size_t value = 0u;
+  };
+
+  struct ciu_caller {
+    template <class CIU, class = enable_if_t<
+        is_nothrow_invocable_v<CIU, concurrent_token<CTX, E_CB>>>>
+    void operator()(CIU&& ciu)
+        { invoke(forward<CIU>(ciu), concurrent_token<CTX, E_CB>{bp_}); }
+    breakpoint* bp_;
+  };
+
+  template <class CIU>
+  static size_t count(CIU&& ciu) {
+    ciu_size_statistics statistics;
+    aid::for_each_in_aggregation(forward<CIU>(ciu), statistics);
+    return statistics.value;
   }
+
+  template <class CIU>
+  void call(CIU&& ciu)
+      { aid::for_each_in_aggregation(forward<CIU>(ciu), ciu_caller{this}); }
 
   void join_last() {
-    invoke(make_extended(move(cb_)), concurrent_finalizer<CTX, E_CB>{this});
+    extending_t<E_CB> cb = make_extended(move(cb_));
+    invoke(move(cb), concurrent_finalizer<CTX, E_CB>{this});
   }
 
-  mutable atomic_size_t count_;
-  CTX ctx_;
+  atomic_size_t detached_;
+  conditional_t<is_void_v<CTX>, tuple<>, CTX> ctx_;
   E_CB cb_;
   aid::concurrent_collector<exception_ptr> exceptions_;
 };
 
 template <class CTX, class E_CB>
-void check_context(const breakpoint<CTX, E_CB>* bp) {
+void check_context(breakpoint<CTX, E_CB>* bp) {
   if (!static_cast<bool>(bp)) { throw invalid_concurrent_invocation_context{}; }
 }
 
@@ -136,62 +126,61 @@ void check_context(const breakpoint<CTX, E_CB>* bp) {
 
 template <class CTX, class E_CB>
 class concurrent_token {
-  friend auto bp_detail::make_token<>(const bp_detail::breakpoint<CTX, E_CB>*);
+  friend class bp_detail::breakpoint<CTX, E_CB>;
 
  public:
-  concurrent_token() = default;
-  concurrent_token(concurrent_token&&) = default;
-  concurrent_token& operator=(concurrent_token&&) = default;
+  concurrent_token() noexcept = default;
+  concurrent_token(concurrent_token&&) noexcept = default;
+  concurrent_token& operator=(concurrent_token&&) noexcept = default;
+
+  bool is_valid() const noexcept { return static_cast<bool>(bp_); }
 
   template <class CIU>
   void fork(CIU&& ciu) const {
     bp_detail::check_context(bp_.get());
-    size_t count = bp_detail::ciu_size<CTX, E_CB>(forward<CIU>(ciu));
-    bp_->count_.fetch_add(count, memory_order_relaxed);
-    bp_->call(forward<CIU>(ciu), count);
+    bp_->fork(forward<CIU>(ciu));
   }
 
-  const CTX& context() const {
+  add_lvalue_reference_t<CTX> context() const {
     bp_detail::check_context(bp_.get());
-    return bp_->ctx_;
+    return bp_->context();
   }
 
   void set_exception(exception_ptr&& p) {
     bp_detail::check_context(bp_.get());
-    bp_->exceptions_.push(move(p));
+    bp_->exceptions().push(move(p));
     bp_.reset();
   }
 
  private:
-  explicit concurrent_token(const bp_detail::breakpoint<CTX, E_CB>* bp)
-      : bp_(bp) {}
+  explicit concurrent_token(bp_detail::breakpoint<CTX, E_CB>* bp) : bp_(bp) {}
 
-  struct deleter {
-    void operator()(const bp_detail::breakpoint<CTX, E_CB>* bp)
-        { bp->join(1u); }
-  };
+  struct deleter
+      { void operator()(bp_detail::breakpoint<CTX, E_CB>* bp) { bp->join(); } };
 
-  unique_ptr<const bp_detail::breakpoint<CTX, E_CB>, deleter> bp_;
+  unique_ptr<bp_detail::breakpoint<CTX, E_CB>, deleter> bp_;
 };
 
 template <class CTX, class E_CB>
 class concurrent_finalizer {
-  friend struct bp_detail::breakpoint<CTX, E_CB>;
+  friend class bp_detail::breakpoint<CTX, E_CB>;
 
  public:
   concurrent_finalizer() = default;
   concurrent_finalizer(concurrent_finalizer&&) = default;
   concurrent_finalizer& operator=(concurrent_finalizer&&) = default;
 
-  CTX& context() const {
+  bool is_valid() const noexcept { return static_cast<bool>(bp_); }
+
+  add_lvalue_reference_t<CTX> context() const {
     bp_detail::check_context(bp_.get());
-    auto& exceptions = bp_->exceptions_;
+    auto& exceptions = bp_->exceptions();
     if (!exceptions.empty()) {
       vector<exception_ptr> ev;
       exceptions.collect(ev);
       throw concurrent_invocation_error{move(ev)};
     }
-    return bp_->ctx_;
+    return bp_->context();
   }
 
  private:
@@ -201,6 +190,59 @@ class concurrent_finalizer {
   unique_ptr<bp_detail::breakpoint<CTX, E_CB>> bp_;
 };
 
+class unexecuted_concurrent_callable : public logic_error {
+ public:
+  explicit unexecuted_concurrent_callable()
+      : logic_error("Unexecuted concurrent callable") {}
+};
+
+template <class E_E, class E_F>
+class async_concurrent_callable;
+
+template <class E_F, class CTX, class E_CB>
+class contextual_async_concurrent_callable {
+  template <class, class>
+  friend class async_concurrent_callable;
+
+ public:
+  contextual_async_concurrent_callable(contextual_async_concurrent_callable&&)
+      = default;
+  contextual_async_concurrent_callable& operator=(
+      contextual_async_concurrent_callable&&) = default;
+
+  ~contextual_async_concurrent_callable() {
+    if (token_.is_valid()) {
+      token_.set_exception(
+          make_exception_ptr(unexecuted_concurrent_callable{}));
+    }
+  }
+
+  void operator()() noexcept {
+    using F = extending_t<E_F>;
+    auto token = move(token_);
+    try {
+      if constexpr (is_invocable_v<F, concurrent_token<CTX, E_CB>&>) {
+        invoke(make_extended(move(f_)), token);
+      } else if constexpr (is_invocable_v<F, add_lvalue_reference_t<CTX>>) {
+        invoke(make_extended(move(f_)), token.context());
+      } else if constexpr (is_invocable_v<F>) {
+        invoke(make_extended(move(f_)));
+      } else {
+        STATIC_ASSERT_FALSE(F);
+      }
+    } catch (...) {
+      token.set_exception(current_exception());
+    }
+  }
+
+ private:
+  explicit contextual_async_concurrent_callable(E_F&& f,
+      concurrent_token<CTX, E_CB>&& token) : f_(move(f)), token_(move(token)) {}
+
+  E_F f_;
+  concurrent_token<CTX, E_CB> token_;
+};
+
 template <class E_E, class E_F>
 class async_concurrent_callable {
  public:
@@ -208,26 +250,21 @@ class async_concurrent_callable {
   explicit async_concurrent_callable(_E_E&& e, _E_F&& f)
       : e_(forward<E_E>(e)), f_(forward<E_F>(f)) {}
 
+  async_concurrent_callable(async_concurrent_callable&&) = default;
+  async_concurrent_callable(const async_concurrent_callable&) = default;
+  async_concurrent_callable& operator=(async_concurrent_callable&&) = default;
+  async_concurrent_callable& operator=(const async_concurrent_callable&)
+      = default;
+
   template <class CTX, class E_CB>
-  void operator()(concurrent_token<CTX, E_CB>&& token) {
-    using F = extending_t<E_F>;
-    make_extended(move(e_)).execute([f = move(f_), token = move(token)]()
-        mutable {
-      auto tk = move(token);
-      try {
-        if constexpr (is_invocable_v<F, concurrent_token<CTX, E_CB>&>) {
-          invoke(make_extended(move(f)), tk);
-        } else if constexpr (is_invocable_v<F, const CTX&>) {
-          invoke(make_extended(move(f)), tk.context());
-        } else if constexpr (is_invocable_v<F>) {
-          invoke(make_extended(move(f)));
-        } else {
-          STATIC_ASSERT_FALSE(E_E);
-        }
-      } catch (...) {
-        tk.set_exception(current_exception());
-      }
-    });
+  void operator()(concurrent_token<CTX, E_CB>&& token) noexcept {
+    contextual_async_concurrent_callable<E_F, CTX, E_CB>
+        callable{move(f_), move(token)};
+    try {
+      make_extended(move(e_)).execute(move(callable));
+    } catch (...) {
+      callable.token_.set_exception(current_exception());
+    }
   }
 
  private:
@@ -250,7 +287,13 @@ class async_concurrent_callback {
   template <class _E_E, class _E_CT>
   explicit async_concurrent_callback(_E_E&& e, _E_CT&& ct)
       : async_concurrent_callback(
-          forward<_E_E>(e), forward<_E_CT>(ct_), E_EH{}) {}
+          forward<_E_E>(e), forward<_E_CT>(ct), E_EH{}) {}
+
+  async_concurrent_callback(async_concurrent_callback&&) = default;
+  async_concurrent_callback(const async_concurrent_callback&) = default;
+  async_concurrent_callback& operator=(async_concurrent_callback&&) = default;
+  async_concurrent_callback& operator=(const async_concurrent_callback&)
+      = default;
 
   template <class CTX, class E_CB>
   void operator()(concurrent_finalizer<CTX, E_CB>&& finalizer) {
@@ -286,9 +329,8 @@ template <class _E_E, class _E_CT, class _E_EH>
 async_concurrent_callback(_E_E&&, _E_CT&&, _E_EH&&)
     -> async_concurrent_callback<decay_t<_E_E>, decay_t<_E_CT>, decay_t<_E_EH>>;
 
-struct throwing_concurrent_exception_handler {
-  void operator()(const concurrent_invocation_error&) { throw; }
-};
+struct throwing_concurrent_exception_handler
+    { void operator()(const concurrent_invocation_error&) { throw; } };
 
 template <class _E_E, class _E_CT>
 async_concurrent_callback(_E_E&&, _E_CT&&)
@@ -297,78 +339,36 @@ async_concurrent_callback(_E_E&&, _E_CT&&)
 
 template <class CIU, class E_CTX, class E_CB>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, E_CB&& cb) {
-  auto* bp = new bp_detail::breakpoint<extending_t<E_CTX>, decay_t<E_CB>>(
-      forward<E_CTX>(ctx), forward<E_CB>(cb));
-  size_t count = bp_detail::ciu_size<extending_t<E_CTX>, decay_t<E_CB>>(
-      forward<CIU>(ciu));
-  if (count == 0u) {
-    bp->join_last();
+  using BP = bp_detail::breakpoint<extending_t<E_CTX>, decay_t<E_CB>>;
+  if constexpr (is_void_v<extending_t<E_CTX>>) {
+    new BP(forward<CIU>(ciu), tuple<>{}, forward<E_CB>(cb));
   } else {
-    atomic_init(&bp->count_, count);
-    bp->call(forward<CIU>(ciu), count);
+    new BP(forward<CIU>(ciu), forward<E_CTX>(ctx), forward<E_CB>(cb));
   }
 }
 
-template <class CIU, class E_CTX>
-decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx) {
-  using R = conditional_t<
-      is_move_constructible_v<extending_t<E_CTX>>, extending_t<E_CTX>, void>;
+template <class CIU, class E_CTX = in_place_type_t<void>>
+decltype(auto) concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
+  using R = conditional_t<is_move_constructible_v<extending_t<E_CTX>>,
+      extending_t<E_CTX>, void>;
   promise<R> p;
+  future<R> f = p.get_future();
   concurrent_invoke(forward<CIU>(ciu), forward<E_CTX>(ctx),
-      [p = move(p)](auto&& token) mutable {
+      [p = move(p)](auto&& finalizer) mutable {
     try {
-      token.context();
-    } catch (const concurrent_invocation_error& ex) {
-      p.set_error(current_exception());
+      finalizer.context();
+    } catch (const concurrent_invocation_error&) {
+      p.set_exception(current_exception());
       return;
     }
     if constexpr (is_same_v<R, void>) {
       p.set_value();
     } else {
-      p.set_value(move(token.context()));
+      p.set_value(move(finalizer.context()));
     }
   });
-  return p.get_future();
+  return f;
 }
-
-class thread_executor {
- public:
-  template <class F>
-  void execute(F&& f) const {
-    thread th{forward<F>(f)};
-    store& s = get_store();
-    lock_guard<mutex> lk{s.mtx_};
-    s.q_.emplace_back(move(th));
-  }
-
- private:
-  struct store {
-    ~store() {
-      deque<thread> q;
-      for (;;) {
-        {
-          lock_guard<mutex> lk{mtx_};
-          swap(q, q_);
-        }
-        if (q.empty()) {
-          break;
-        }
-        do {
-          thread th = move(q.front());
-          q.pop_front();
-          th.join();
-        } while (!q.empty());
-      }
-    };
-
-    deque<thread> q_;
-    mutex mtx_;
-  };
-  static inline store& get_store() {
-    static store s;
-    return s;
-  }
-};
 
 }  // namespace std
 
