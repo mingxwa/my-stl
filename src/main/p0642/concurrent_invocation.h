@@ -26,13 +26,13 @@ class invalid_concurrent_invocation_context : public logic_error {
       : logic_error("Invalid concurrent invocation context") {}
 };
 
-class cancelled_concurrent_invocation : public runtime_error {
+class canceled_concurrent_invocation : public runtime_error {
  public:
-  explicit cancelled_concurrent_invocation()
+  explicit canceled_concurrent_invocation()
       : runtime_error("The concurrent invocation has been canceled") {}
 };
 
-template <class CTX>
+template <class CTX = void>
 class concurrent_invocation_error : public runtime_error {
  public:
   explicit concurrent_invocation_error(vector<exception_ptr> nested, CTX ctx)
@@ -85,7 +85,7 @@ class breakpoint {
   void fork(CIU&& ciu) {
     size_t n = count(forward<CIU>(ciu));
     alter_state([=](ptrdiff_t x) {
-      if (x < 0) { throw cancelled_concurrent_invocation{}; }
+      if (x < 0) { throw canceled_concurrent_invocation{}; }
       return x + n;
     });
     call(forward<CIU>(ciu), n);
@@ -110,7 +110,7 @@ class breakpoint {
   aid::concurrent_collector<exception_ptr>& exceptions() { return exceptions_; }
   add_lvalue_reference_t<CTX> context()
       { if constexpr (!is_void_v<CTX>) { return ctx_; } }
-  bool is_cancelled() { return state_.load(memory_order_relaxed) < 0; }
+  bool is_canceled() { return state_.load(memory_order_relaxed) < 0; }
 
  private:
   struct ciu_size_statistics {
@@ -186,8 +186,8 @@ class concurrent_token {
   concurrent_token& operator=(concurrent_token&&) noexcept = default;
 
   bool is_valid() const noexcept { return static_cast<bool>(bp_); }
-  bool is_cancelled() const
-      { check_preconditions(); return bp_->is_cancelled(); }
+  bool is_canceled() const
+      { check_preconditions(); return bp_->is_canceled(); }
 
   template <class CIU>
   void fork(CIU&& ciu) const
@@ -242,7 +242,6 @@ class contextual_async_concurrent_callable {
   }
 
   void operator()() noexcept {
-    using F = extending_t<F>;
     concurrent_token<CTX, CB> token = move(token_);
     try {
       if constexpr (is_invocable_v<F, concurrent_token<CTX, CB>&>) {
@@ -268,7 +267,7 @@ class async_concurrent_callable {
  public:
   template <class _E, class _F>
   explicit async_concurrent_callable(_E&& e, _F&& f)
-      : e_(forward<E>(e)), f_(forward<F>(f)) {}
+      : e_(forward<_E>(e)), f_(forward<_F>(f)) {}
 
   async_concurrent_callable(async_concurrent_callable&&) = default;
   async_concurrent_callable(const async_concurrent_callable&) = default;
