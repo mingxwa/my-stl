@@ -40,11 +40,8 @@ int main() {
       cd.result_of_library_b = call_library_b();
     })};
 
-  auto cb = std::async_concurrent_callback{
-      e, [](contextual_data&& data) { data.print(); }};
-
-  std::concurrent_invoke(std::move(ciu), std::in_place_type<contextual_data>,
-      std::move(cb));
+  std::concurrent_invoke(std::move(ciu), std::in_place_type<contextual_data>)
+      .print();
 
   puts("Main exit...");
 }

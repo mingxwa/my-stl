@@ -10,35 +10,32 @@
 
 namespace aid {
 
-struct applicable_traits { static inline constexpr bool applicable = true; };
-struct inapplicable_traits { static inline constexpr bool applicable = false; };
-
 namespace aggregation_tratis_detail {
 
 template <class SFINAE, class T>
-struct sfinae_tuple_traits : inapplicable_traits {};
+struct sfinae_tuple_traits : std::false_type {};
 
 template <class T>
 struct sfinae_tuple_traits<std::void_t<decltype(
-    std::tuple_size<std::decay_t<T>>::value)>, T> : applicable_traits {};
+    std::tuple_size<std::decay_t<T>>::value)>, T> : std::true_type {};
 
 template <class SFINAE, class T>
-struct sfinae_container_traits : inapplicable_traits {};
+struct sfinae_container_traits : std::false_type {};
 
 template <class T>
 struct sfinae_container_traits<std::void_t<
     decltype(std::declval<T>().begin() != std::declval<T>().end())>, T>
-    : applicable_traits {};
+    : std::true_type {};
 
 }  // namespace aggregation_tratis_detail
 
 template <class T>
 inline constexpr bool is_tuple_v
-    = aggregation_tratis_detail::sfinae_tuple_traits<void, T>::applicable;
+    = aggregation_tratis_detail::sfinae_tuple_traits<void, T>::value;
 
 template <class T>
 inline constexpr bool is_container_v
-    = aggregation_tratis_detail::sfinae_container_traits<void, T>::applicable;
+    = aggregation_tratis_detail::sfinae_container_traits<void, T>::value;
 
 }  // namespace aid
 

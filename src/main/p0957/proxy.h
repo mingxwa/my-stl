@@ -338,21 +338,19 @@ template <class F, class A> class proxy;  // Mock implementation
 
 namespace proxy_detail {
 
-template <class P> struct proxy_traits : aid::inapplicable_traits {};
-template <class F, class A> struct proxy_traits<proxy<F, A>>
-    : aid::applicable_traits {};
-template <class P> inline constexpr bool is_proxy_v
-    = proxy_traits<P>::applicable;
+template <class P> struct proxy_traits : false_type {};
+template <class F, class A> struct proxy_traits<proxy<F, A>> : true_type {};
+template <class P> inline constexpr bool is_proxy_v = proxy_traits<P>::value;
 
 template <class SFINAE, class... Args>
-struct sfinae_proxy_delegated_construction_traits : aid::applicable_traits {};
+struct sfinae_proxy_delegated_construction_traits : false_type {};
 template <class T>
 struct sfinae_proxy_delegated_construction_traits<
-    enable_if_t<is_proxy_v<decay_t<T>>>, T> : aid::applicable_traits {};
+    enable_if_t<is_proxy_v<decay_t<T>>>, T> : true_type {};
 
 template <class... Args>
 inline constexpr bool is_proxy_delegated_construction_v
-    = sfinae_proxy_delegated_construction_traits<void, Args...>::applicable;
+    = sfinae_proxy_delegated_construction_traits<void, Args...>::value;
 
 }  // namespace proxy_detail
 
