@@ -63,7 +63,7 @@ class FbDemo1 {
  public:
   explicit FbDemo1(int num) : num_(num) {}
 
-  void fun_b(std::value_proxy<FA> p) {
+  void fun_b(std::p0957::value_proxy<FA> p) {
     puts("FbDemo1: fun_b called");
     p.fun_a_0();
     std::cout << p.fun_a_1(5) << std::endl;
@@ -93,7 +93,7 @@ class FcDemo1 {
     return 5;
   }
 
-  static void fun_b(std::value_proxy<FA> p) {
+  static void fun_b(std::p0957::value_proxy<FA> p) {
     puts("FcDemo1: static fun_b called");
     p.fun_a_0();
     std::cout << p.fun_a_1(5) << std::endl;
@@ -110,12 +110,12 @@ class FcDemo1 {
 };
 
 int main() {
-  std::value_proxy<FC> p1(FcDemo1{8});
+  std::p0957::value_proxy<FC> p1(FcDemo1{8});
 
   // FcDemo1::fun_a_0() is called.
   p1.fun_a_0();
 
-  p1 = std::make_extending_construction<FcDemo1>(7);
+  p1 = std::p1648::make_extending_construction<FcDemo1>(7);
 
   // FcDemo1::fun_a_1(double) is called.
   p1.fun_a_1(1.5);
@@ -127,12 +127,12 @@ int main() {
   p1.fun_c();
 
   auto value = FcDemo1{10};
-  std::reference_proxy<FB> p2(value);
+  std::p0957::reference_proxy<FB> p2(value);
 
   // FcDemo1::fun_b(value_proxy<FA>) is called
   p2.fun_b(FaDemo1 {456});
 
-  p1 = std::make_extending_construction<FcDemo1>(23);
+  p1 = std::p1648::make_extending_construction<FcDemo1>(23);
 
   p1.fun_a_0();
 

@@ -12,6 +12,20 @@
 
 namespace test {
 
+namespace detail {
+
+struct random_engine_wrapper {
+  random_engine_wrapper() : engine_(static_cast<unsigned int>(
+      std::chrono::high_resolution_clock::now().time_since_epoch().count())
+          * seed_id.fetch_add(1u, std::memory_order_relaxed)) {}
+
+  std::mt19937 engine_;
+  static inline std::atomic_uint seed_id{1u};
+};
+inline thread_local random_engine_wrapper wrapper;
+
+}  // namespace detail
+
 class time_recorder {
  public:
   explicit time_recorder(const char* name) : name_(name),
@@ -35,17 +49,7 @@ class time_recorder {
   std::chrono::time_point<std::chrono::system_clock> when_;
 };
 
-inline std::mt19937& get_random_engine() {
-  struct generator_wrapper {
-    generator_wrapper() : engine_(static_cast<unsigned int>(
-        std::chrono::high_resolution_clock::now().time_since_epoch().count()))
-        {}
-
-    std::mt19937 engine_;
-  };
-  static thread_local generator_wrapper wrapper;
-  return wrapper.engine_;
-}
+inline std::mt19937& get_random_engine() { return detail::wrapper.engine_; }
 
 inline int random_int(int min, int max) {
   return std::uniform_int_distribution<int>{min, max}(get_random_engine());

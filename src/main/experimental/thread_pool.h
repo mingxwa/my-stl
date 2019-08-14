@@ -6,8 +6,8 @@
 #define SRC_MAIN_EXPERIMENTAL_THREAD_POOL_H_
 
 #include <utility>
+#include <vector>
 #include <queue>
-#include <memory>
 #include <mutex>
 #include <condition_variable>
 
@@ -15,77 +15,85 @@
 #include "../p0957/mock/proxy_callable_impl.h"
 #include "../p0642/concurrent_invocation.h"
 
-namespace std {
+namespace std::experimental {
 
-template <class F = value_proxy<Callable<void()>>>
+template <class F = p0957::value_proxy<Callable<void()>>>
 class static_thread_pool {
-  struct data_type;
+  struct context {
+    mutex mtx_;
+    condition_variable cond_;
+    queue<F> tasks_;
+    bool finished_{false};
+  };
+
+  struct continuation {
+    void operator()() {}
+    void error(vector<exception_ptr>&&) { terminate(); }
+  };
 
  public:
-  template <class E = crucial_thread_executor>
-  explicit static_thread_pool(size_t thread_count, const E& executor = E())
-      : data_(make_shared<data_type>()) {
-    for (size_t i = 0; i < thread_count; ++i) {
-      executor.execute([data = data_] {
-        unique_lock<mutex> lk(data->mtx_);
-        for (;;) {
-          if (!data->tasks_.empty()) {
-            {
-              F current = move(data->tasks_.front());
-              data->tasks_.pop();
-              lk.unlock();
-              forward<F>(current)();
-            }
-            lk.lock();
-          } else if (data->is_shutdown_) {
-            break;
-          } else {
-            data->cond_.wait(lk);
+  template <class E = aid::thread_executor>
+  explicit static_thread_pool(size_t thread_count, const E& e = E{}) {
+    auto single_worker = p0642::async_concurrent_callable{e, [](auto&& token) {
+      context& ctx = token.context();
+      unique_lock<mutex> lk(ctx.mtx_);
+      for (;;) {
+        if (!ctx.tasks_.empty()) {
+          {
+            F current = move(ctx.tasks_.front());
+            ctx.tasks_.pop();
+            lk.unlock();
+            invoke(move(current));
           }
+          lk.lock();
+        } else if (ctx.finished_) {
+          break;
+        } else {
+          ctx.cond_.wait(lk);
         }
-      });
-    }
+      }
+    }};
+
+    auto ciu = tuple{[this](auto&& token) { this->token_ = move(token); },
+        vector<decltype(single_worker)>{thread_count, single_worker}};
+
+    p0642::concurrent_invoke(ciu, in_place_type<context>, continuation{});
   }
 
   ~static_thread_pool() {
+    context& ctx = token_.context();
     {
-      lock_guard<mutex> lk(data_->mtx_);
-      data_->is_shutdown_ = true;
+      lock_guard<mutex> lk(ctx.mtx_);
+      ctx.finished_ = true;
     }
-    data_->cond_.notify_all();
+    ctx.cond_.notify_all();
   }
 
   class executor_type {
    public:
-    explicit executor_type(data_type* data) : data_(data) {}
+    explicit executor_type(context* ctx) : ctx_(ctx) {}
     executor_type(const executor_type&) = default;
 
     template <class _F>
     void execute(_F&& f) const {
       {
-        lock_guard<mutex> lk(data_->mtx_);
-        data_->tasks_.emplace(forward<_F>(f));
+        lock_guard<mutex> lk(ctx_->mtx_);
+        ctx_->tasks_.emplace(forward<_F>(f));
       }
-      data_->cond_.notify_one();
+      ctx_->cond_.notify_one();
     }
 
    private:
-    data_type* const data_;
+    context* const ctx_;
   };
 
-  executor_type executor() const { return executor_type(data_.get()); }
+  executor_type executor() const { return executor_type(&token_.context()); }
 
  private:
-  struct data_type {
-    mutex mtx_;
-    condition_variable cond_;
-    bool is_shutdown_ = false;
-    queue<F> tasks_;
-  };
-
-  shared_ptr<data_type> data_;
+  p0642::concurrent_token<context,
+      p0642::async_concurrent_callback<continuation>> token_;
 };
 
-}  // namespace std
+}  // namespace std::experimental
 
 #endif  // SRC_MAIN_EXPERIMENTAL_THREAD_POOL_H_

@@ -17,7 +17,7 @@
 template <class, class>
 struct ImmutableMap;
 
-namespace std {
+namespace std::p0957 {
 
 template <class K, class V,
     template <qualification_type, reference_type> class E>
@@ -94,6 +94,6 @@ class proxy<ImmutableMap<K, V>, A> : public A {
   }
 };
 
-}  // namespace std
+}  // namespace std::p0957
 
 #endif  // SRC_MAIN_P0957_MOCK_PROXY_IMMUTABLE_MAP_IMPL_H_

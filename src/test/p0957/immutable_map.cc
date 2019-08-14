@@ -11,7 +11,7 @@
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_immutable_map_impl.h"
 
-void do_something_with_map(std::reference_proxy<
+void do_something_with_map(std::p0957::reference_proxy<
     const ImmutableMap<int, std::string>> m) {
   try {
     std::cout << m.at(1) << std::endl;

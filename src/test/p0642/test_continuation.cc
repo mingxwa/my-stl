@@ -10,7 +10,7 @@
 aid::thread_executor e;
 
 int main() {
-  struct contextual_data {
+  struct context {
     int value;
     std::string str;
 
@@ -18,20 +18,19 @@ int main() {
   };
 
   auto ciu = std::tuple{
-    std::async_concurrent_callable(e, [](contextual_data& cd) {
+    std::p0642::async_concurrent_callable(e, [](context& ctx) {
       test::mock_execution(1000);
-      cd.value = 123;
+      ctx.value = 123;
     }),
-    std::async_concurrent_callable(e, [](contextual_data& cd) {
+    std::p0642::async_concurrent_callable(e, [](context& ctx) {
       test::mock_execution(2000);
-      cd.str = "Awesome!";
+      ctx.str = "Awesome!";
     })};
 
-  auto continuation = std::async_concurrent_continuation{
-      e, [](contextual_data&& data) { data.print(); }};
+  auto continuation = std::p0642::async_concurrent_continuation{
+      e, [](context&& data) { data.print(); }};
 
-  std::concurrent_invoke(ciu, std::in_place_type<contextual_data>,
-      std::context_moving_reducer{}, continuation);
+  std::p0642::concurrent_invoke(ciu, std::in_place_type<context>, continuation);
 
   puts("Main exit...");
 }

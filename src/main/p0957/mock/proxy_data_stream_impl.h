@@ -18,7 +18,7 @@
 template <class>
 struct DataStream;
 
-namespace std {
+namespace std::p0957 {
 
 template <class V, template <qualification_type, reference_type> class E>
 struct proxy_meta<DataStream<V>, E> {
@@ -109,6 +109,6 @@ class proxy<DataStream<V>, A> : public A {
   }
 };
 
-}  // namespace std
+}  // namespace std::p0957
 
 #endif  // SRC_MAIN_P0957_MOCK_PROXY_DATA_STREAM_IMPL_H_

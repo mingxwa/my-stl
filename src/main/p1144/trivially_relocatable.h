@@ -7,7 +7,7 @@
 
 #include <type_traits>
 
-namespace std {
+namespace std::p1144 {
 
 template <class T>
 struct is_trivially_relocatable : bool_constant<
@@ -18,6 +18,6 @@ template <class T>
 inline constexpr bool is_trivially_relocatable_v =
     is_trivially_relocatable<T>::value;
 
-}  // namespace std
+}  // namespace std::p1144
 
 #endif  // SRC_MAIN_P1144_TRIVIALLY_RELOCATABLE_H_

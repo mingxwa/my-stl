@@ -17,7 +17,7 @@
 
 struct FB;
 
-namespace std {
+namespace std::p0957 {
 
 template <template <qualification_type, reference_type> class E>
 struct proxy_meta<FB, E> {
@@ -90,6 +90,6 @@ class proxy<FB, A> : public A {
   }
 };
 
-}  // namespace std
+}  // namespace std::p0957
 
 #endif  // SRC_MAIN_P0957_MOCK_PROXY_FB_IMPL_H_

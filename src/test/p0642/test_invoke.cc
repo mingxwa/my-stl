@@ -10,22 +10,31 @@
 aid::thread_executor e;
 
 int main() {
-  struct contextual_data {
+  // The contextual data type for collaboration
+  struct context {
     int value;
     std::string str;
 
     void print() { printf("A: %d, B: %s\n", value, str.data()); }
   };
 
+  // CIU is short for "Concurrent Invocation Unit". A CIU may be a "Concurrent
+  // Callable", or an aggregation of multiple CIUs.
+  // "std::p0642::async_concurrent_callable" is a prototype for the "Concurrent
+  // Callable".
   auto ciu = std::tuple{
-    std::async_concurrent_callable(e, [](contextual_data& cd) {
+    std::p0642::async_concurrent_callable(e, [](context& ctx) {
       test::mock_execution(1000);
-      cd.value = 123;
+      ctx.value = 123;
     }),
-    std::async_concurrent_callable(e, [](contextual_data& cd) {
+    std::p0642::async_concurrent_callable(e, [](context& ctx) {
       test::mock_execution(2000);
-      cd.str = "Awesome!";
+      ctx.str = "Awesome!";
     })};
 
-  std::concurrent_invoke(ciu, std::in_place_type<contextual_data>).print();
+  // Perform blocking concurrent invocation with the CIU. context will
+  // be default-constructed for collaboration.
+  auto result = std::p0642::concurrent_invoke(ciu, std::in_place_type<context>);
+
+  result.print();
 }

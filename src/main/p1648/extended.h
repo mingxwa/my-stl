@@ -9,7 +9,7 @@
 #include <tuple>
 #include <initializer_list>
 
-namespace std {
+namespace std::p1648 {
 
 template <class T>
 decltype(auto) make_extended(T&&);
@@ -48,7 +48,7 @@ auto make_extending_construction(initializer_list<U> il,  E_Args&&... args) {
       il, forward<E_Args>(args)...);
 }
 
-namespace extending_detail {
+namespace detail {
 
 template <class T>
 struct in_place_type_traits : false_type {};
@@ -96,18 +96,17 @@ struct sfinae_extending_traits<enable_if_t<
   }
 };
 
-}  // namespace extending_detail
+}  // namespace detail
 
 template <class T>
-using extending_t = typename extending_detail::sfinae_extending_traits<void, T>
+using extending_t = typename detail::sfinae_extending_traits<void, T>
     ::constructed;
 
 template <class T>
 decltype(auto) make_extended(T&& value) {
-  return extending_detail::sfinae_extending_traits<void, T>
-      ::extend(forward<T>(value));
+  return detail::sfinae_extending_traits<void, T>::extend(forward<T>(value));
 }
 
-}  // namespace std
+}  // namespace std::p1648
 
 #endif  // SRC_MAIN_P1648_EXTENDED_H_

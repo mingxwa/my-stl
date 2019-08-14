@@ -51,7 +51,7 @@ int main() {
   for (int i = 0; i < 10; ++i) {
     s1.emplace(i);
   }
-  std::reference_proxy<DataStream<double>> p(s1);
+  std::p0957::reference_proxy<DataStream<double>> p(s1);
   p = s1;
   while (p.has_next()) {
     printf("%f\n", p.next());

@@ -10,13 +10,12 @@
 #include <typeinfo>
 #include <initializer_list>
 #include <stdexcept>
+#include <memory>
 
 #include "../p1144/trivially_relocatable.h"
-#include "../p1172/memory_allocator.h"
 #include "../p1648/extended.h"
-#include "../common/more_utility.h"
 
-namespace std {
+namespace std::p0957 {
 
 enum class qualification_type
     { none, const_qualified, volatile_qualified, cv_qualified };
@@ -79,21 +78,24 @@ class null_value_addresser_error : public logic_error {
       : logic_error("The value addresser is not representing a value") {}
 };
 
-template <class T, class MA>
+template <class T, class A>
 struct allocated_value {
+  using Alloc = typename allocator_traits<A>
+      ::template rebind_alloc<allocated_value>;
+
   template <class _T>
-  explicit allocated_value(_T&& value, MA&& ma)
-      : value_(make_extended(forward<_T>(value))), ma_(move(ma)) {}
+  explicit allocated_value(_T&& value, const A& alloc)
+      : value_(p1648::make_extended(forward<_T>(value))), alloc_(alloc) {}
 
   T value_;
-  MA ma_;
+  Alloc alloc_;
 };
 
 namespace erased_detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
 inline constexpr bool VALUE_USES_SBO = sizeof(T) <= SIZE
-    && alignof(T) <= ALIGN && is_trivially_relocatable_v<T>;
+    && alignof(T) <= ALIGN && p1144::is_trivially_relocatable_v<T>;
 
 template <size_t SIZE, size_t ALIGN>
 union value_storage {
@@ -176,14 +178,18 @@ struct reference_meta<M, false> {
 };
 
 template <class T>
-void destroy_small_value(void* erased)
-    { static_cast<T*>(erased)->~T(); }
+void destroy_small_value(void* erased) { static_cast<T*>(erased)->~T(); }
 
-template <class T, class MA>
+template <class T, class A>
 void destroy_large_value(void* erased) {
-  allocated_value<T, MA>* p = *static_cast<allocated_value<T, MA>**>(erased);
-  MA ma = move(p->ma_);
-  aid::destroy(move(ma), p);
+  using V = allocated_value<T, A>;
+  using Alloc = typename V::Alloc;
+  V* p = *static_cast<V**>(erased);
+  Alloc alloc = move(p->alloc_);
+  p->~V();
+
+  // Requires: V* shall be convertible to Alloc::typename pointer
+  allocator_traits<Alloc>::deallocate(alloc, p, 1u);
 }
 
 template <class T> const type_info& get_type() { return typeid(T); }
@@ -195,9 +201,9 @@ struct value_meta {
       : core_(in_place_type<T>), destroy_(destroy_small_value<T>),
         type_(get_type<T>) {}
 
-  template <class T, class MA>
-  constexpr explicit value_meta(in_place_type_t<T>, in_place_type_t<MA>)
-      : core_(in_place_type<T>), destroy_(destroy_large_value<T, MA>),
+  template <class T, class A>
+  constexpr explicit value_meta(in_place_type_t<T>, in_place_type_t<A>)
+      : core_(in_place_type<T>), destroy_(destroy_large_value<T, A>),
         type_(get_type<T>) {}
 
   M core_;
@@ -222,9 +228,9 @@ class value_addresser {
   void assign(T&& val)
       { value_addresser(delegated_tag, forward<T>(val)).swap(*this); }
 
-  template <class T, class MA>
-  void assign(T&& val, MA&& ma) {
-    value_addresser(delegated_tag, forward<T>(val), forward<MA>(ma))
+  template <class T, class A>
+  void assign(T&& val, A&& alloc) {
+    value_addresser(delegated_tag, forward<T>(val), forward<A>(alloc))
         .swap(*this);
   }
 
@@ -243,16 +249,28 @@ class value_addresser {
   template <class E_T>
   explicit value_addresser(delegated_tag_t, E_T&& value)
       : value_addresser(delegated_tag, forward<E_T>(value),
-          global_memory_allocator{}) {}
+          allocator<char>{}) {}
 
-  template <class E_T, class E_MA>
-  explicit value_addresser(delegated_tag_t, E_T&& value, E_MA&& ma)
+  template <class E_T, class A>
+  explicit value_addresser(delegated_tag_t, E_T&& value, const A& alloc)
       : value_addresser(delegated_tag) {
-    if constexpr (erased_detail
-        ::VALUE_USES_SBO<extending_t<E_T>, SIZE, ALIGN>) {
-      init_small(forward<E_T>(value));
+    using T = p1648::extending_t<E_T>;
+    if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
+      new(storage_.value_) T(p1648::make_extended(forward<E_T>(value)));
+      meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
     } else {
-      init_large(forward<E_T>(value), forward<E_MA>(ma));
+      using V = allocated_value<T, A>;
+      using Alloc = typename V::Alloc;
+      Alloc real_alloc(alloc);
+      V* ptr = allocator_traits<Alloc>::allocate(real_alloc, 1u);
+      try {
+        new(ptr) V(forward<E_T>(value), move(real_alloc));
+      } catch (...) {
+        allocator_traits<Alloc>::deallocate(real_alloc, ptr, 1u);
+        throw;
+      }
+      storage_.ptr_ = ptr;
+      meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T, A>;
     }
   }
 
@@ -271,23 +289,6 @@ class value_addresser {
   const storage_t&& erased() const&& { return move(storage_); }
 
  private:
-  template <class E_T>
-  void init_small(E_T&& value) {
-    using T = extending_t<E_T>;
-    new(&storage_.value_) T(make_extended(forward<E_T>(value)));
-    meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
-  }
-
-  template <class E_T, class E_MA>
-  void init_large(E_T&& value, E_MA&& ma) {
-    using T = extending_t<E_T>;
-    using MA = extending_t<E_MA>;
-    decltype(auto) ema = make_extended(forward<E_MA>(ma));
-    storage_.ptr_ = aid::construct<allocated_value<T, MA>>(
-        ema, forward<E_T>(value), forward<decltype(ema)>(ema));
-    meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T, MA>;
-  }
-
   const meta_detail::value_meta<M>* meta_;
   storage_t storage_;
 };
@@ -343,10 +344,10 @@ template <class F, class A> struct proxy_traits<proxy<F, A>> : true_type {};
 template <class P> inline constexpr bool is_proxy_v = proxy_traits<P>::value;
 
 template <class SFINAE, class... Args>
-struct sfinae_proxy_delegated_construction_traits : false_type {};
+struct sfinae_proxy_delegated_construction_traits : true_type {};
 template <class T>
 struct sfinae_proxy_delegated_construction_traits<
-    enable_if_t<is_proxy_v<decay_t<T>>>, T> : true_type {};
+    enable_if_t<is_proxy_v<decay_t<T>>>, T> : false_type {};
 
 template <class... Args>
 inline constexpr bool is_proxy_delegated_construction_v
@@ -362,6 +363,6 @@ template <class F>
 using reference_proxy = proxy<decay_t<F>, reference_addresser<
     proxy_meta<decay_t<F>, erased_reference>, qualification_of_v<F>>>;
 
-}  // namespace std
+}  // namespace std::p0957
 
 #endif  // SRC_MAIN_P0957_PROXY_H_

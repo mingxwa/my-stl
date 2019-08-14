@@ -16,37 +16,10 @@
 
 namespace aid {
 
-template <class T, class MA, class... Args>
-T* construct(MA&& ma, Args&&... args) {
-  void* result = ma.template allocate<sizeof(T), alignof(T)>();
-  try {
-    return new(result) T(std::forward<Args>(args)...);
-  } catch (...) {
-    ma.template deallocate<sizeof(T), alignof(T)>(result);
-    throw;
-  }
-}
-
-template <class MA, class T>
-void destroy(MA&& ma, T* p) {
-  try {
-    p->~T();
-  } catch (...) {
-    ma.template deallocate<sizeof(T), alignof(T)>(p);
-    throw;
-  }
-  ma.template deallocate<sizeof(T), alignof(T)>(p);
-}
-
 template <std::size_t I = 0u, class TP, class F>
 void for_each_in_tuple(TP&& tp, F&& f) {
   if constexpr (I != std::tuple_size_v<std::remove_reference_t<TP>>) {
     if constexpr (std::is_invocable_v<
-        F, decltype(std::get<I>(std::declval<TP>())),
-        std::integral_constant<std::size_t, I>>) {
-      std::invoke(std::forward<F>(f), std::get<I>(
-          std::forward<TP>(tp)), std::integral_constant<std::size_t, I>{});
-    } else if constexpr (std::is_invocable_v<
         F, decltype(std::get<I>(std::declval<TP>()))>) {
       std::invoke(std::forward<F>(f), std::get<I>(std::forward<TP>(tp)));
     } else {
