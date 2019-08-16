@@ -9,13 +9,15 @@
 #include "../test_utility.h"
 
 int main() {
-  std::experimental::static_thread_pool<> pool(10);
+  std::experimental::thread_pool<> pool(100);
   auto ex = pool.executor();
-  for (int i = 0; i < 20; ++i) {
-    ex.execute([]() {
-      test::mock_random_execution(1000, 3000);
-      puts("Hello World!");
-    });
-  }
+  auto single_task = std::p0642::async_concurrent_callable{
+      ex, [] { test::mock_execution(1); }};
+  auto ciu = std::vector<decltype(single_task)>{100000, single_task};
+
+  test::time_recorder rec("basic thread pool");
+  std::p0642::concurrent_invoke(ciu);
+  rec.record();
+
   puts("Main thread exit...");
 }

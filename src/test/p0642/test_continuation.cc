@@ -28,7 +28,7 @@ int main() {
     })};
 
   auto continuation = std::p0642::async_concurrent_continuation{
-      e, [](context&& data) { data.print(); }};
+      aid::in_place_executor{}, [](context&& data) { data.print(); }};
 
   std::p0642::concurrent_invoke(ciu, std::in_place_type<context>, continuation);
 

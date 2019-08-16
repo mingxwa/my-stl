@@ -15,7 +15,7 @@ struct context {
 
 struct competing_task {
   template <class Token>
-  void operator()(Token& token) const {
+  void operator()(const Token& token) const {
     int loop_times = test::random_int(10, 100);
     std::atomic_int& who_wins = token.context().who_wins;
     for (int i = 0; i < loop_times; ++i) {

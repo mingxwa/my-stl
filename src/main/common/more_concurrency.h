@@ -16,6 +16,11 @@
 
 namespace aid {
 
+struct in_place_executor {
+  template <class F>
+  void execute(F&& f) const { std::invoke(std::forward<F>(f)); }
+};
+
 class thread_executor {
  public:
   template <class F>

@@ -276,7 +276,7 @@ template <class CT>
 class async_concurrent_callback {
  public:
   template <class _CT>
-  explicit async_concurrent_callback(_CT&& ct) : ct_(forward<_CT>(ct_)) {}
+  explicit async_concurrent_callback(_CT&& ct) : ct_(forward<_CT>(ct)) {}
 
   template <class CTX>
   void operator()(detail::breakpoint<CTX, async_concurrent_callback>* bp) {

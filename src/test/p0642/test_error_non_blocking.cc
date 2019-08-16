@@ -26,7 +26,8 @@ int main() {
     })};
 
   auto continuation = std::p0642::async_concurrent_continuation{
-      e, []() { puts("Normal control flow..."); }, [](auto&& exceptions) {
+      aid::in_place_executor{},
+      []() { puts("Normal control flow..."); }, [](auto&& exceptions) {
     puts("Error control flow");
     for (auto& ep : exceptions) {
       try {
