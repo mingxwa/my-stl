@@ -21,7 +21,7 @@ namespace std::experimental {
 
 namespace detail {
 
-enum class thread_pool_status { STABLE, SHRINKING, SHURDOWN };
+enum class thread_pool_status { STABLE, SHRINKING, SHUTDOWN };
 
 }  // namespace detail
 
@@ -146,7 +146,7 @@ class thread_pool {
     {
       lock_guard<mutex> lk(ctx.mtx_);
       ctx.reserved_task_count_ = 0u;
-      ctx.status_ = detail::thread_pool_status::SHURDOWN;
+      ctx.status_ = detail::thread_pool_status::SHUTDOWN;
     }
     ctx.cond_.notify_all();
   }
