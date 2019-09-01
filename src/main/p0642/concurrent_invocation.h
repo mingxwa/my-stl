@@ -63,12 +63,16 @@ namespace detail {
 template <class CTX, class CB>
 class breakpoint {
  public:
-  template <class CIU, class E_CTX, class _CB>
-  explicit breakpoint(CIU&& ciu, E_CTX&& ctx, _CB&& cb)
-      : ctx_(p1648::make_extended(forward<E_CTX>(ctx))), cb_(forward<_CB>(cb)) {
+  template <class E_CTX, class _CB>
+  explicit breakpoint(E_CTX&& ctx, _CB&& cb)
+      : ctx_(p1648::make_extended(forward<E_CTX>(ctx))),
+        cb_(forward<_CB>(cb)) {}
+
+  template <class CIU>
+  void invoke(CIU&& ciu) {
     size_t n = count(forward<CIU>(ciu));
     if (n == 0u) {
-      invoke(move(cb_), this);
+      std::invoke(move(cb_), this);
     } else {
       atomic_init(&state_, n);
       call(forward<CIU>(ciu), n);
@@ -85,7 +89,7 @@ class breakpoint {
   void join(size_t n) {
     if (state_.fetch_sub(n, memory_order_release) == n) {
       atomic_thread_fence(memory_order_acquire);
-      invoke(move(cb_), this);
+      std::invoke(move(cb_), this);
     }
   }
 
@@ -106,7 +110,7 @@ class breakpoint {
         is_invocable_v<CIU, concurrent_token<CTX, CB>>>>
     void operator()(CIU&& ciu) {
       --*remain;
-      invoke(forward<CIU>(ciu), concurrent_token<CTX, CB>{bp_});
+      std::invoke(forward<CIU>(ciu), concurrent_token<CTX, CB>{bp_});
     }
     breakpoint* bp_;
     size_t* remain;
@@ -280,10 +284,15 @@ class async_concurrent_callback {
 
   template <class CTX>
   void operator()(detail::breakpoint<CTX, async_concurrent_callback>* bp) {
-    auto& exceptions = bp->exceptions();
+    auto exceptions = bp->exceptions().reduce();
     if (exceptions.empty()) {
       if constexpr (detail::is_context_reducible<CTX>) {
-        invoke(move(ct_), move(bp->context()).reduce());
+        if constexpr (is_void_v<decltype(declval<CTX>().reduce())>) {
+          move(bp->context()).reduce();
+          invoke(move(ct_));
+        } else {
+          invoke(move(ct_), move(bp->context()).reduce());
+        }
       } else if constexpr (is_move_constructible_v<CTX>) {
         invoke(move(ct_), move(bp->context()));
       } else {
@@ -291,11 +300,16 @@ class async_concurrent_callback {
       }
     } else {
       if constexpr (detail::is_context_reducible<CTX>) {
-        move(ct_).error(exceptions.reduce(), move(bp->context()).reduce());
+        if constexpr (is_void_v<decltype(declval<CTX>().reduce())>) {
+          move(bp->context()).reduce();
+          move(ct_).error(move(exceptions));
+        } else {
+          move(ct_).error(move(exceptions), move(bp->context()).reduce());
+        }
       } else if constexpr (is_move_constructible_v<CTX>) {
-        move(ct_).error(exceptions.reduce(), move(bp->context()));
+        move(ct_).error(move(exceptions), move(bp->context()));
       } else {
-        move(ct_).error(exceptions.reduce());
+        move(ct_).error(move(exceptions));
       }
     }
     delete bp;
@@ -308,9 +322,9 @@ class async_concurrent_callback {
 template <class CIU, class E_CTX, class CT>
 void concurrent_invoke(CIU&& ciu, E_CTX&& ctx, CT&& ct) {
   using CB = async_concurrent_callback<decay_t<CT>>;
-  new detail::breakpoint<p1648::extending_t<E_CTX>, CB>{
-      forward<CIU>(ciu), detail::forward_context(forward<E_CTX>(ctx)),
-      CB{forward<CT>(ct)}};
+  (new detail::breakpoint<p1648::extending_t<E_CTX>, CB>{
+      detail::forward_context(forward<E_CTX>(ctx)), CB{forward<CT>(ct)}})
+      ->invoke(forward<CIU>(ciu));
 }
 
 template <class CIU, class E_CTX = in_place_type_t<void>>
@@ -319,10 +333,11 @@ auto concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
   promise<void> p;
   future<void> f = p.get_future();
   detail::breakpoint<CTX, sync_concurrent_callback> bp{
-      forward<CIU>(ciu), detail::forward_context(forward<E_CTX>(ctx)),
+      detail::forward_context(forward<E_CTX>(ctx)),
       sync_concurrent_callback{move(p)}};
+  bp.invoke(forward<CIU>(ciu));
   f.get();
-  auto& exceptions = bp.exceptions();
+  auto exceptions = bp.exceptions().reduce();
   if (exceptions.empty()) {
     if constexpr (detail::is_context_reducible<CTX>) {
       return move(bp.context()).reduce();
@@ -331,14 +346,18 @@ auto concurrent_invoke(CIU&& ciu, E_CTX&& ctx = E_CTX{}) {
     }
   } else {
     if constexpr (detail::is_context_reducible<CTX>) {
-      throw concurrent_invocation_error<decay_t<
-          decltype(move(bp.context()).reduce())>>{exceptions.reduce(),
-              move(bp.context()).reduce()};
+      if constexpr (is_void_v<decltype(declval<CTX>().reduce())>) {
+        move(bp.context()).reduce();
+        throw concurrent_invocation_error<>{move(exceptions)};
+      } else {
+        throw concurrent_invocation_error<decltype(declval<CTX>().reduce())>{
+            move(exceptions), move(bp.context()).reduce()};
+      }
     } else if constexpr (is_move_constructible_v<CTX>) {
       throw concurrent_invocation_error<decay_t<CTX>>{
-          exceptions.reduce(), move(bp.context())};
+          move(exceptions), move(bp.context())};
     } else {
-      throw concurrent_invocation_error<>{exceptions.reduce()};
+      throw concurrent_invocation_error<>{move(exceptions)};
     }
   }
 }

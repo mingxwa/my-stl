@@ -80,19 +80,13 @@ struct sfinae_extending_traits<
   static inline constructed extend(T&&) { return constructed{}; }
 };
 
-template <class T, class E_ArgsTuple, size_t... I>
-T make_from_extending_tuple(E_ArgsTuple&& args, index_sequence<I...>)
-    { return T{make_extended(get<I>(move(args)))...}; }
-
 template <class T>
 struct sfinae_extending_traits<enable_if_t<
     extending_construction_traits<decay_t<T>>::value>, T> {
   using constructed = typename extending_construction_traits<decay_t<T>>
       ::constructed;
   static inline constructed extend(T&& value) {
-    return make_from_extending_tuple<constructed>(forward<T>(value).get_args(),
-        make_index_sequence<extending_construction_traits<decay_t<T>>
-            ::ARGS_COUNT>{});
+    return make_from_tuple<constructed>(forward<T>(value).get_args());
   }
 };
 

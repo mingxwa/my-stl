@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "../../main/p0642/concurrent_invocation.h"
+#include "../../main/experimental/thread_pool.h"
 #include "../test_utility.h"
 
 struct context {
@@ -37,15 +38,16 @@ struct competing_task {
   int number;
 };
 
-aid::thread_executor e;
-
 int main() {
+  std::experimental::static_thread_pool<> pool(100);
+  auto ex = pool.executor();
+
   std::vector<std::p0642::async_concurrent_callable<
-      aid::thread_executor, competing_task>> ciu;
+      decltype(ex), competing_task>> ciu;
 
   constexpr int THREADS = 100;
   for (int number = 1; number <= THREADS; ++number) {
-    ciu.emplace_back(e, competing_task{number});
+    ciu.emplace_back(ex, competing_task{number});
   }
 
   printf("Start executing with %d threads...\n", THREADS);

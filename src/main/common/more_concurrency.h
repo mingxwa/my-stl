@@ -64,13 +64,8 @@ template <class T>
 class concurrent_collector {
  public:
   concurrent_collector() : last_(&sentinel_) {}
-  ~concurrent_collector() {
-    node* current;
-    while ((current = sentinel_.next_) != nullptr) {
-      sentinel_.next_ = current->next_;
-      delete current;
-    }
-  }
+  ~concurrent_collector()
+      { if (sentinel_.next_ != nullptr) { std::terminate(); } }
 
   template <class U>
   void push(U&& value) {
@@ -78,8 +73,6 @@ class concurrent_collector {
     node* last = last_.exchange(current, std::memory_order_relaxed);
     last->next_ = current;
   }
-
-  bool empty() const { return sentinel_.next_ == nullptr; }
 
   template <class C = std::vector<T>>
   C reduce(C container = C{}) {
