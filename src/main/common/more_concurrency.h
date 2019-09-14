@@ -7,10 +7,10 @@
 
 #include <utility>
 #include <vector>
-#include <deque>
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <functional>
 
 #include "../p1648/extended.h"
 
@@ -28,30 +28,24 @@ class thread_executor {
     std::thread th{std::forward<F>(f)};
     store& s = get_store();
     std::lock_guard<std::mutex> lk{s.mtx_};
-    s.q_.emplace_back(std::move(th));
+    s.threads_.emplace_back(std::move(th));
   }
 
  private:
   struct store {
     ~store() {
-      std::deque<std::thread> q;
+      std::vector<std::thread> threads;
       for (;;) {
         {
           std::lock_guard<std::mutex> lk{mtx_};
-          std::swap(q, q_);
+          std::swap(threads, threads_);
         }
-        if (q.empty()) {
-          break;
-        }
-        do {
-          std::thread th = std::move(q.front());
-          q.pop_front();
-          th.join();
-        } while (!q.empty());
+        if (threads.empty()) { break; }
+        for (auto& th : threads) { th.join(); }
       }
     }
 
-    std::deque<std::thread> q_;
+    std::vector<std::thread> threads_;
     std::mutex mtx_;
   };
   static inline store& get_store() {

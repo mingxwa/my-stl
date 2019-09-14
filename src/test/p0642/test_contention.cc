@@ -5,7 +5,6 @@
 #include <cstdio>
 
 #include "../../main/p0642/concurrent_invocation.h"
-#include "../../main/experimental/thread_pool.h"
 #include "../test_utility.h"
 
 struct context {
@@ -15,10 +14,9 @@ struct context {
 };
 
 struct competing_task {
-  template <class Token>
-  void operator()(const Token& token) const {
+  void operator()(context& ctx) const {
     int loop_times = test::random_int(10, 100);
-    std::atomic_int& who_wins = token.context().who_wins;
+    std::atomic_int& who_wins = ctx.who_wins;
     for (int i = 0; i < loop_times; ++i) {
       if (who_wins.load(std::memory_order_relaxed) != 0) {
         printf("Task %d exits because there is a winner.\n", number);
@@ -38,20 +36,19 @@ struct competing_task {
   int number;
 };
 
-int main() {
-  std::experimental::static_thread_pool<> pool(100);
-  auto ex = pool.executor();
+aid::thread_executor e;
 
-  std::vector<std::p0642::async_concurrent_callable<
-      decltype(ex), competing_task>> ciu;
+int main() {
+  std::vector<std::p0642::serial_concurrent_session<
+      aid::thread_executor, competing_task>> csa;
 
   constexpr int THREADS = 100;
   for (int number = 1; number <= THREADS; ++number) {
-    ciu.emplace_back(ex, competing_task{number});
+    csa.emplace_back(e, competing_task{number});
   }
 
   printf("Start executing with %d threads...\n", THREADS);
-  int who_wins = std::p0642::concurrent_invoke(ciu,
+  int who_wins = std::p0642::concurrent_invoke(csa,
       std::in_place_type<context>);
   printf("All set! Task %d wins.\n", who_wins);
 }

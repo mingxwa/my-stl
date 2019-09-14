@@ -20,6 +20,12 @@ namespace std::experimental {
 
 namespace detail {
 
+template <class Token>
+struct initiating_session {
+  void start(Token&& token) const { *token_ = move(token); }
+  Token* const token_;
+};
+
 struct noexcept_trivial_continuation {
   void operator()() {}
   void error(vector<exception_ptr>&&) { terminate(); }
@@ -54,7 +60,7 @@ class static_thread_pool {
 
   template <class _EventConsumer>
   explicit static_thread_pool(size_t thread_count, _EventConsumer&& ec) {
-    auto single_worker = p0642::async_concurrent_callable{
+    auto single_worker = p0642::serial_concurrent_session{
         aid::thread_executor{}, [](auto&& token) {
       context& ctx = token.context();
       unique_lock<mutex> lk(ctx.mtx_);
@@ -75,13 +81,13 @@ class static_thread_pool {
       }
     }};
 
-    auto ciu = tuple{[this](auto&& token) { this->token_ = move(token); },
+    auto csa = tuple{initiating_session<decltype(token_)>{&token_},
         vector<decltype(single_worker)>{thread_count, single_worker}};
 
     auto ctx = p1648::make_extending_construction<context>(
         forward<_EventConsumer>(ec));
 
-    p0642::concurrent_invoke(ciu, ctx, detail::noexcept_trivial_continuation{});
+    p0642::concurrent_invoke(csa, ctx, detail::noexcept_trivial_continuation{});
   }
 
   ~static_thread_pool() {
@@ -99,6 +105,7 @@ class static_thread_pool {
    public:
     explicit executor_type(context* ctx) : ctx_(ctx) {}
     executor_type(const executor_type&) = default;
+    executor_type& operator=(const executor_type&) = default;
 
     template <class _Event>
     void execute(_Event&& ev) const {
@@ -116,7 +123,7 @@ class static_thread_pool {
     }
 
    private:
-    context* const ctx_;
+    context* ctx_;
   };
 
   executor_type executor() const { return executor_type(&token_.context()); }

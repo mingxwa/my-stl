@@ -10,12 +10,12 @@
 aid::thread_executor e;
 
 int main() {
-  auto ciu = std::tuple{
-    std::p0642::async_concurrent_callable(e, []() {
+  auto csa = std::tuple{
+    std::p0642::serial_concurrent_session(e, []() {
       test::mock_execution(2000);
       puts("OK for the first path");
     }),
-    std::p0642::async_concurrent_callable(e, []() {
+    std::p0642::serial_concurrent_session(e, []() {
       test::mock_execution(1000);
       puts("Let's do something evil for the second path ^_^");
 
@@ -38,7 +38,7 @@ int main() {
     }
   }};
 
-  std::p0642::concurrent_invoke(ciu, std::in_place_type<void>, continuation);
+  std::p0642::concurrent_invoke(csa, std::in_place_type<void>, continuation);
 
   puts("Main exit...");
 }
