@@ -22,6 +22,7 @@ namespace detail {
 
 template <class Token>
 struct initiating_session {
+  initiating_session(Token* token) : token_(token) {}
   void start(Token&& token) const { *token_ = move(token); }
   Token* const token_;
 };
@@ -81,7 +82,7 @@ class static_thread_pool {
       }
     }};
 
-    auto csa = tuple{initiating_session<decltype(token_)>{&token_},
+    auto csa = tuple{detail::initiating_session{&token_},
         vector<decltype(single_worker)>{thread_count, single_worker}};
 
     auto ctx = p1648::make_extending_construction<context>(
@@ -92,7 +93,7 @@ class static_thread_pool {
 
   ~static_thread_pool() {
     if (token_.is_valid()) {
-      context& ctx = token_.context();
+      context& ctx = token_.get().context();
       {
         lock_guard<mutex> lk(ctx.mtx_);
         ctx.finished_ = true;
@@ -126,7 +127,8 @@ class static_thread_pool {
     context* ctx_;
   };
 
-  executor_type executor() const { return executor_type(&token_.context()); }
+  executor_type executor() const
+      { return executor_type(&token_.get().context()); }
 
  private:
   p0642::concurrent_token<context, p0642::async_concurrent_callback<
