@@ -16,42 +16,73 @@
 
 namespace aid {
 
-struct in_place_executor {
-  template <class F>
-  void execute(F&& f) const { std::invoke(std::forward<F>(f)); }
-};
+namespace detail {
 
-class thread_executor {
+class global_concurrency_manager_t {
  public:
-  template <class F>
-  void execute(F&& f) const {
-    std::thread th{std::forward<F>(f)};
-    store& s = get_store();
-    std::lock_guard<std::mutex> lk{s.mtx_};
-    s.threads_.emplace_back(std::move(th));
+  ~global_concurrency_manager_t() {
+    if (concurrency_.fetch_sub(1u, std::memory_order_relaxed) != 1u) {
+      {
+        std::unique_lock<std::mutex> lk{mtx_};
+        cond_.wait(lk, [=] { return finished_; });
+      }
+      while (concurrency_.load(std::memory_order_relaxed) != 0u)
+          { std::this_thread::yield(); }
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+  }
+
+  void increase(std::size_t count)
+      { concurrency_.fetch_add(count, std::memory_order_relaxed); }
+
+  void decrease() {
+    std::atomic_thread_fence(std::memory_order_release);
+    std::size_t concurrency = concurrency_.load(std::memory_order_relaxed);
+    do {
+      if (concurrency == 1u) {
+        {
+          std::lock_guard<std::mutex> lk{mtx_};
+          finished_ = true;
+        }
+        cond_.notify_one();
+        concurrency_.store(0u, std::memory_order_release);
+        break;
+      }
+    } while (!concurrency_.compare_exchange_weak(
+        concurrency, concurrency - 1u, std::memory_order_relaxed));
   }
 
  private:
-  struct store {
-    ~store() {
-      std::vector<std::thread> threads;
-      for (;;) {
-        {
-          std::lock_guard<std::mutex> lk{mtx_};
-          std::swap(threads, threads_);
-        }
-        if (threads.empty()) { break; }
-        for (auto& th : threads) { th.join(); }
-      }
-    }
+  std::atomic_size_t concurrency_{1u};
+  bool finished_{false};
+  std::mutex mtx_;
+  std::condition_variable cond_;
+} inline global_concurrency_manager;
 
-    std::vector<std::thread> threads_;
-    std::mutex mtx_;
-  };
-  static inline store& get_store() {
-    static store s;
-    return s;
+}  // namespace detail
+
+inline void increase_global_concurrency(std::size_t count) {
+  detail::global_concurrency_manager.increase(count);
+}
+
+inline void decrease_global_concurrency() {
+  detail::global_concurrency_manager.decrease();
+}
+
+struct thread_executor {
+  template <class F>
+  void execute(F&& f) const {
+    increase_global_concurrency(1u);
+    std::thread{[f = std::forward<F>(f)]() mutable {
+      std::invoke(std::move(f));
+      decrease_global_concurrency();
+    }}.detach();
   }
+};
+
+struct in_place_executor {
+  template <class F>
+  void execute(F&& f) const { std::invoke(std::forward<F>(f)); }
 };
 
 template <class T>

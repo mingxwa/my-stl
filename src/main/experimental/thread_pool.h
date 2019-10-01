@@ -27,8 +27,13 @@ struct initiating_session {
   Token* const token_;
 };
 
-struct noexcept_trivial_continuation {
-  void operator()() {}
+struct worker_thread_executor {
+  template <class F>
+  void execute(F&& f) const { std::thread{std::forward<F>(f)}.detach(); }
+};
+
+struct global_concurrency_decrement_continuation {
+  void operator()() { aid::decrease_global_concurrency(); }
   void error(vector<exception_ptr>&&) { terminate(); }
 };
 
@@ -62,8 +67,8 @@ class static_thread_pool {
   template <class _EventConsumer>
   explicit static_thread_pool(size_t thread_count, _EventConsumer&& ec) {
     auto single_worker = p0642::serial_concurrent_session{
-        aid::thread_executor{}, [](auto&& token) {
-      context& ctx = token.context();
+        detail::worker_thread_executor{}, [](auto&& bp) {
+      context& ctx = bp.context();
       unique_lock<mutex> lk(ctx.mtx_);
       for (;;) {
         if (!ctx.events_.empty()) {
@@ -84,11 +89,12 @@ class static_thread_pool {
 
     auto csa = tuple{detail::initiating_session{&token_},
         vector<decltype(single_worker)>{thread_count, single_worker}};
-
     auto ctx = p1648::make_extending_construction<context>(
         forward<_EventConsumer>(ec));
+    auto ct = detail::global_concurrency_decrement_continuation{};
 
-    p0642::concurrent_invoke(csa, ctx, detail::noexcept_trivial_continuation{});
+    aid::increase_global_concurrency(1u);
+    p0642::concurrent_invoke(csa, ctx, ct);
   }
 
   ~static_thread_pool() {
@@ -132,7 +138,7 @@ class static_thread_pool {
 
  private:
   p0642::concurrent_token<context, p0642::async_concurrent_callback<
-      detail::noexcept_trivial_continuation>> token_;
+      detail::global_concurrency_decrement_continuation>> token_;
 };
 
 }  // namespace std::experimental
