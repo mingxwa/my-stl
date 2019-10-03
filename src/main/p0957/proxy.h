@@ -13,7 +13,7 @@
 #include <memory>
 
 #include "../p1144/trivially_relocatable.h"
-#include "../p1648/extended.h"
+#include "../p1648/sinking.h"
 
 namespace std::p0957 {
 
@@ -85,7 +85,7 @@ struct allocated_value {
 
   template <class _T>
   explicit allocated_value(_T&& value, const A& alloc)
-      : value_(p1648::make_extended(forward<_T>(value))), alloc_(alloc) {}
+      : value_(p1648::sink(forward<_T>(value))), alloc_(alloc) {}
 
   T value_;
   Alloc alloc_;
@@ -246,17 +246,17 @@ class value_addresser {
 
   explicit value_addresser(delegated_tag_t) noexcept : meta_(nullptr) {}
 
-  template <class E_T>
-  explicit value_addresser(delegated_tag_t, E_T&& value)
-      : value_addresser(delegated_tag, forward<E_T>(value),
+  template <class S_T>
+  explicit value_addresser(delegated_tag_t, S_T&& value)
+      : value_addresser(delegated_tag, forward<S_T>(value),
           allocator<char>{}) {}
 
-  template <class E_T, class A>
-  explicit value_addresser(delegated_tag_t, E_T&& value, const A& alloc)
+  template <class S_T, class A>
+  explicit value_addresser(delegated_tag_t, S_T&& value, const A& alloc)
       : value_addresser(delegated_tag) {
-    using T = p1648::extending_t<E_T>;
+    using T = p1648::sunk_t<S_T>;
     if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
-      new(storage_.value_) T(p1648::make_extended(forward<E_T>(value)));
+      new(storage_.value_) T(p1648::sink(forward<S_T>(value)));
       meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
     } else {
       using V = allocated_value<T, A>;
@@ -264,7 +264,7 @@ class value_addresser {
       Alloc real_alloc(alloc);
       V* ptr = allocator_traits<Alloc>::allocate(real_alloc, 1u);
       try {
-        new(ptr) V(forward<E_T>(value), move(real_alloc));
+        new(ptr) V(forward<S_T>(value), move(real_alloc));
       } catch (...) {
         allocator_traits<Alloc>::deallocate(real_alloc, ptr, 1u);
         throw;

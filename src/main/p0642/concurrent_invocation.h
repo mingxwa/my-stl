@@ -14,7 +14,7 @@
 #include <atomic>
 #include <future>
 
-#include "../p1648/extended.h"
+#include "../p1648/sinking.h"
 #include "../common/more_utility.h"
 #include "../common/more_concurrency.h"
 
@@ -24,12 +24,12 @@ template <class CTX, class CB> class concurrent_token;
 
 namespace detail {
 
-template <class E_CTX>
-decltype(auto) forward_context(E_CTX&& ctx) {
-  if constexpr (is_void_v<p1648::extending_t<E_CTX>>) {
+template <class S_CTX>
+decltype(auto) forward_context(S_CTX&& ctx) {
+  if constexpr (is_void_v<p1648::sunk_t<S_CTX>>) {
     return tuple<>{};
   } else {
-    return forward<E_CTX>(ctx);
+    return forward<S_CTX>(ctx);
   }
 }
 
@@ -94,9 +94,9 @@ class concurrent_invocation_error<void> : public runtime_error {
 template <class CTX, class CB>
 class concurrent_breakpoint {
  public:
-  template <class E_CTX, class _CB>
-  explicit concurrent_breakpoint(E_CTX&& ctx, _CB&& cb)
-      : ctx_(p1648::make_extended(forward<E_CTX>(ctx))),
+  template <class S_CTX, class _CB>
+  explicit concurrent_breakpoint(S_CTX&& ctx, _CB&& cb)
+      : ctx_(p1648::sink(forward<S_CTX>(ctx))),
         cb_(forward<_CB>(cb)) {}
 
   template <class CSA>
@@ -320,21 +320,21 @@ class async_concurrent_callback {
   CT ct_;
 };
 
-template <class CSA, class E_CTX, class CT>
-void concurrent_invoke(CSA&& csa, E_CTX&& ctx, CT&& ct) {
+template <class CSA, class S_CTX, class CT>
+void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct) {
   using CB = async_concurrent_callback<decay_t<CT>>;
-  (new concurrent_breakpoint<p1648::extending_t<E_CTX>, CB>{
-      detail::forward_context(forward<E_CTX>(ctx)), CB{forward<CT>(ct)}})
+  (new concurrent_breakpoint<p1648::sunk_t<S_CTX>, CB>{
+      detail::forward_context(forward<S_CTX>(ctx)), CB{forward<CT>(ct)}})
       ->invoke(forward<CSA>(csa));
 }
 
-template <class CSA, class E_CTX = in_place_type_t<void>>
-auto concurrent_invoke(CSA&& csa, E_CTX&& ctx = E_CTX{}) {
-  using CTX = p1648::extending_t<E_CTX>;
+template <class CSA, class S_CTX = in_place_type_t<void>>
+auto concurrent_invoke(CSA&& csa, S_CTX&& ctx = S_CTX{}) {
+  using CTX = p1648::sunk_t<S_CTX>;
   promise<void> p;
   future<void> f = p.get_future();
   concurrent_breakpoint<CTX, sync_concurrent_callback> bp{
-      detail::forward_context(forward<E_CTX>(ctx)),
+      detail::forward_context(forward<S_CTX>(ctx)),
       sync_concurrent_callback{move(p)}};
   bp.invoke(forward<CSA>(csa));
   f.get();

@@ -12,24 +12,17 @@
 #include <atomic>
 #include <functional>
 
-#include "../p1648/extended.h"
+#include "../p1648/sinking.h"
 
 namespace aid {
 
 namespace detail {
 
-class global_concurrency_manager_t {
+class global_concurrency_manager {
  public:
-  ~global_concurrency_manager_t() {
-    if (concurrency_.fetch_sub(1u, std::memory_order_relaxed) != 1u) {
-      {
-        std::unique_lock<std::mutex> lk{mtx_};
-        cond_.wait(lk, [=] { return finished_; });
-      }
-      while (concurrency_.load(std::memory_order_relaxed) != 0u)
-          { std::this_thread::yield(); }
-    }
-    std::atomic_thread_fence(std::memory_order_acquire);
+  static inline global_concurrency_manager* instance() {
+    static global_concurrency_manager s;
+    return &s;
   }
 
   void increase(std::size_t count)
@@ -53,20 +46,34 @@ class global_concurrency_manager_t {
   }
 
  private:
-  std::atomic_size_t concurrency_{1u};
-  bool finished_{false};
+  global_concurrency_manager() : concurrency_(1u), finished_(false) {}
+
+  ~global_concurrency_manager() {
+    if (concurrency_.fetch_sub(1u, std::memory_order_relaxed) != 1u) {
+      {
+        std::unique_lock<std::mutex> lk{mtx_};
+        cond_.wait(lk, [=] { return finished_; });
+      }
+      while (concurrency_.load(std::memory_order_relaxed) != 0u)
+          { std::this_thread::yield(); }
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+  }
+
+  std::atomic_size_t concurrency_;
+  bool finished_;
   std::mutex mtx_;
   std::condition_variable cond_;
-} inline global_concurrency_manager;
+};
 
 }  // namespace detail
 
 inline void increase_global_concurrency(std::size_t count) {
-  detail::global_concurrency_manager.increase(count);
+  detail::global_concurrency_manager::instance()->increase(count);
 }
 
 inline void decrease_global_concurrency() {
-  detail::global_concurrency_manager.decrease();
+  detail::global_concurrency_manager::instance()->decrease();
 }
 
 struct thread_executor {
@@ -119,7 +126,7 @@ class concurrent_collector {
   struct value_node : node {
     template <class U>
     explicit value_node(U&& value)
-        : value_(std::p1648::make_extended(std::forward<U>(value))) {}
+        : value_(std::p1648::sink(std::forward<U>(value))) {}
 
     T value_;
   };
