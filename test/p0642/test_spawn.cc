@@ -17,9 +17,9 @@ int main() {
         puts("Single Fork Task Done");
       }};
 
-      // Users may "fork" other CSAs on the host concurrent invocation with the
+      // Users may "spawn" other CSAs on the host concurrent invocation with the
       // token.
-      bp.fork(std::vector{10, single_task});
+      bp.spawn(std::vector{10, single_task});
       puts("First Task Done");
     }},
     std::p0642::serial_concurrent_session{e, []() {

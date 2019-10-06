@@ -115,7 +115,7 @@ int main() {
   // FcDemo1::fun_a_0() is called.
   p1.fun_a_0();
 
-  p1 = std::p1648::make_extending_construction<FcDemo1>(7);
+  p1 = std::p1648::make_sinking_construction<FcDemo1>(7);
 
   // FcDemo1::fun_a_1(double) is called.
   p1.fun_a_1(1.5);
@@ -132,7 +132,7 @@ int main() {
   // FcDemo1::fun_b(value_proxy<FA>) is called
   p2.fun_b(FaDemo1 {456});
 
-  p1 = std::p1648::make_extending_construction<FcDemo1>(23);
+  p1 = std::p1648::make_sinking_construction<FcDemo1>(23);
 
   p1.fun_a_0();
 

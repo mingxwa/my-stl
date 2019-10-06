@@ -20,7 +20,13 @@
 
 namespace std::p0642 {
 
+template <class CSA, class S_CTX, class CT>
+void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct);
+template <class CSA, class S_CTX = in_place_type_t<void>>
+auto concurrent_invoke(CSA&& csa, S_CTX&& ctx = S_CTX{});
+
 template <class CTX, class CB> class concurrent_token;
+template <class CT> class async_concurrent_callback;
 
 namespace detail {
 
@@ -55,10 +61,10 @@ inline bool constexpr is_concurrent_session
 
 }  // namespace detail
 
-class invalid_concurrent_invocation_context : public logic_error {
+class invalid_concurrent_breakpoint : public logic_error {
  public:
-  explicit invalid_concurrent_invocation_context()
-      : logic_error("Invalid concurrent invocation context") {}
+  explicit invalid_concurrent_breakpoint()
+      : logic_error("Invalid concurrent breakpoint") {}
 };
 
 template <class CTX = void>
@@ -93,11 +99,28 @@ class concurrent_invocation_error<void> : public runtime_error {
 
 template <class CTX, class CB>
 class concurrent_breakpoint {
+  template <class CSA, class S_CTX, class CT>
+  friend void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct);
+  template <class CSA, class S_CTX>
+  friend auto concurrent_invoke(CSA&& csa, S_CTX&& ctx);
+  friend class concurrent_token<CTX, CB>;
+  template <class> friend class async_concurrent_callback;
+
  public:
+  template <class CSA>
+  void spawn(CSA&& csa) {
+    size_t n = count(forward<CSA>(csa));
+    state_.fetch_add(n, memory_order_relaxed);
+    start(forward<CSA>(csa), n);
+  }
+
+  add_lvalue_reference_t<CTX> context()
+      { if constexpr (!is_void_v<CTX>) { return ctx_; } }
+
+ private:
   template <class S_CTX, class _CB>
   explicit concurrent_breakpoint(S_CTX&& ctx, _CB&& cb)
-      : ctx_(p1648::sink(forward<S_CTX>(ctx))),
-        cb_(forward<_CB>(cb)) {}
+      : ctx_(p1648::sink(forward<S_CTX>(ctx))), cb_(forward<_CB>(cb)) {}
 
   template <class CSA>
   void invoke(CSA&& csa) {
@@ -110,13 +133,6 @@ class concurrent_breakpoint {
     }
   }
 
-  template <class CSA>
-  void fork(CSA&& csa) {
-    size_t n = count(forward<CSA>(csa));
-    state_.fetch_add(n, memory_order_relaxed);
-    start(forward<CSA>(csa), n);
-  }
-
   void join(size_t n) {
     if (state_.fetch_sub(n, memory_order_release) == n) {
       atomic_thread_fence(memory_order_acquire);
@@ -124,11 +140,6 @@ class concurrent_breakpoint {
     }
   }
 
-  aid::concurrent_collector<exception_ptr>& exceptions() { return exceptions_; }
-  add_lvalue_reference_t<CTX> context()
-      { if constexpr (!is_void_v<CTX>) { return ctx_; } }
-
- private:
   struct csa_count_statistics {
     template <class CSA, class = enable_if_t<
         detail::is_concurrent_session<CSA, CTX, CB>>>
@@ -183,14 +194,14 @@ class concurrent_token {
   bool is_valid() const noexcept { return static_cast<bool>(bp_); }
   void reset() noexcept { bp_.reset(); }
   breakpoint& get() const {
-    if (!is_valid()) { throw invalid_concurrent_invocation_context{}; }
+    if (!is_valid()) { throw invalid_concurrent_breakpoint{}; }
     return *bp_.get();
   }
 
   void set_exception(exception_ptr&& p) {
-    if (!is_valid()) { throw invalid_concurrent_invocation_context{}; }
+    if (!is_valid()) { throw invalid_concurrent_breakpoint{}; }
     auto bp = move(bp_);
-    bp->exceptions().push(move(p));
+    bp->exceptions_.push(move(p));
   }
 
  private:
@@ -285,7 +296,7 @@ class async_concurrent_callback {
 
   template <class CTX>
   void operator()(concurrent_breakpoint<CTX, async_concurrent_callback>* bp) {
-    auto exceptions = bp->exceptions().reduce();
+    auto exceptions = bp->exceptions_.reduce();
     if (exceptions.empty()) {
       if constexpr (detail::is_context_reducible<CTX>) {
         if constexpr (is_void_v<decltype(declval<CTX>().reduce())>) {
@@ -328,8 +339,8 @@ void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct) {
       ->invoke(forward<CSA>(csa));
 }
 
-template <class CSA, class S_CTX = in_place_type_t<void>>
-auto concurrent_invoke(CSA&& csa, S_CTX&& ctx = S_CTX{}) {
+template <class CSA, class S_CTX>
+auto concurrent_invoke(CSA&& csa, S_CTX&& ctx) {
   using CTX = p1648::sunk_t<S_CTX>;
   promise<void> p;
   future<void> f = p.get_future();
@@ -338,7 +349,7 @@ auto concurrent_invoke(CSA&& csa, S_CTX&& ctx = S_CTX{}) {
       sync_concurrent_callback{move(p)}};
   bp.invoke(forward<CSA>(csa));
   f.get();
-  auto exceptions = bp.exceptions().reduce();
+  auto exceptions = bp.exceptions_.reduce();
   if (exceptions.empty()) {
     if constexpr (detail::is_context_reducible<CTX>) {
       return move(bp.context()).reduce();

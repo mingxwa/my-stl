@@ -69,9 +69,6 @@ inline constexpr qualification_type qualification_of_v
 template <class T, reference_type R>
 using add_reference_t = conditional_t<R == reference_type::lvalue, T&, T&&>;
 
-struct delegated_tag_t { explicit delegated_tag_t() = default; };
-inline constexpr delegated_tag_t delegated_tag{};
-
 class null_value_addresser_error : public logic_error {
  public:
   explicit null_value_addresser_error()
@@ -222,38 +219,27 @@ class value_addresser {
   const type_info& type() const noexcept
       { return meta_ == nullptr ? typeid(void) : meta_->type_(); }
 
-  void reset() noexcept { value_addresser(delegated_tag).swap(*this); }
-
-  template <class T>
-  void assign(T&& val)
-      { value_addresser(delegated_tag, forward<T>(val)).swap(*this); }
-
+  void reset() noexcept { value_addresser().swap(*this); }
   template <class T, class A>
-  void assign(T&& val, A&& alloc) {
-    value_addresser(delegated_tag, forward<T>(val), forward<A>(alloc))
-        .swap(*this);
-  }
-
+  void assign(T&& val, A&& alloc)
+      { value_addresser(forward<T>(val), forward<A>(alloc)).swap(*this); }
   void swap(value_addresser& rhs) noexcept
       { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
 
  protected:
+  value_addresser() noexcept : meta_(nullptr) {}
   value_addresser(value_addresser&& rhs) noexcept {
     meta_ = rhs.meta_;
     storage_ = rhs.storage_;
     rhs.meta_ = nullptr;
   }
 
-  explicit value_addresser(delegated_tag_t) noexcept : meta_(nullptr) {}
-
   template <class S_T>
-  explicit value_addresser(delegated_tag_t, S_T&& value)
-      : value_addresser(delegated_tag, forward<S_T>(value),
-          allocator<char>{}) {}
+  explicit value_addresser(S_T&& value)
+      : value_addresser(forward<S_T>(value), allocator<char>{}) {}
 
   template <class S_T, class A>
-  explicit value_addresser(delegated_tag_t, S_T&& value, const A& alloc)
-      : value_addresser(delegated_tag) {
+  explicit value_addresser(S_T&& value, const A& alloc) : value_addresser() {
     using T = p1648::sunk_t<S_T>;
     if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
       new(storage_.value_) T(p1648::sink(forward<S_T>(value)));
@@ -274,10 +260,13 @@ class value_addresser {
     }
   }
 
-  ~value_addresser() { if (meta_ != nullptr) { meta_->destroy_(&storage_); } }
-
   value_addresser& operator=(value_addresser&& rhs) noexcept
       { swap(rhs); return *this; }
+  template <class S_T>
+  value_addresser& operator=(S_T&& value)
+      { return *this = value_addresser{value}; }
+
+  ~value_addresser() { if (meta_ != nullptr) { meta_->destroy_(&storage_); } }
 
   const M& meta() const {
     if (meta_ == nullptr) { throw null_value_addresser_error{}; }
@@ -295,34 +284,17 @@ class value_addresser {
 
 template <class M, qualification_type Q>
 class reference_addresser {
-  template <class, qualification_type>
-  friend class reference_addresser;
-
- public:
-  template <class T>
-  void assign(T& value) noexcept {
-    meta_ = typename meta_detail::reference_meta<M>
-        ::type{in_place_type<decay_t<T>>};
-    ptr_ = &value;
-  }
-
  protected:
   reference_addresser(const reference_addresser&) noexcept = default;
-
-  template <class _M, qualification_type _Q>
-  reference_addresser(const reference_addresser<_M, _Q>& rhs) noexcept
-      : meta_(rhs.meta_), ptr_(rhs.ptr_) {}
-
   template <class T>
-  explicit reference_addresser(delegated_tag_t, T& value) noexcept
+  explicit reference_addresser(T& value) noexcept
       : meta_(in_place_type<decay_t<T>>), ptr_(&value) {}
 
   reference_addresser& operator=(const reference_addresser& rhs)
       noexcept = default;
-
-  template <class _M, qualification_type _Q>
-  reference_addresser& operator=(const reference_addresser<_M, _Q>& rhs)
-      noexcept { meta_ = rhs.meta(); ptr_ = rhs.ptr_; return *this; }
+  template <class T>
+  reference_addresser& operator=(T& value) noexcept
+      { return *this = reference_addresser{value}; }
 
   const M& meta() const noexcept { return meta_; }
   auto erased() const noexcept { return ptr_; }
@@ -336,24 +308,6 @@ template <class F, template <qualification_type, reference_type> class E>
     struct proxy_meta;  // Mock implementation
 
 template <class F, class A> class proxy;  // Mock implementation
-
-namespace proxy_detail {
-
-template <class P> struct proxy_traits : false_type {};
-template <class F, class A> struct proxy_traits<proxy<F, A>> : true_type {};
-template <class P> inline constexpr bool is_proxy_v = proxy_traits<P>::value;
-
-template <class SFINAE, class... Args>
-struct sfinae_proxy_delegated_construction_traits : true_type {};
-template <class T>
-struct sfinae_proxy_delegated_construction_traits<
-    enable_if_t<is_proxy_v<decay_t<T>>>, T> : false_type {};
-
-template <class... Args>
-inline constexpr bool is_proxy_delegated_construction_v
-    = sfinae_proxy_delegated_construction_traits<void, Args...>::value;
-
-}  // namespace proxy_detail
 
 template <class F, size_t SIZE = sizeof(void*), size_t ALIGN = alignof(void*)>
 using value_proxy = proxy<F, value_addresser<proxy_meta<
