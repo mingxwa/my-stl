@@ -75,6 +75,8 @@ class null_value_addresser_error : public logic_error {
       : logic_error("The value addresser is not representing a value") {}
 };
 
+namespace erased_detail {
+
 template <class T, class A>
 struct allocated_value {
   using Alloc = typename allocator_traits<A>
@@ -87,8 +89,6 @@ struct allocated_value {
   T value_;
   Alloc alloc_;
 };
-
-namespace erased_detail {
 
 template <class T, size_t SIZE, size_t ALIGN>
 inline constexpr bool VALUE_USES_SBO = sizeof(T) <= SIZE
@@ -179,7 +179,7 @@ void destroy_small_value(void* erased) { static_cast<T*>(erased)->~T(); }
 
 template <class T, class A>
 void destroy_large_value(void* erased) {
-  using V = allocated_value<T, A>;
+  using V = erased_detail::allocated_value<T, A>;
   using Alloc = typename V::Alloc;
   V* p = *static_cast<V**>(erased);
   Alloc alloc = move(p->alloc_);
@@ -220,9 +220,9 @@ class value_addresser {
       { return meta_ == nullptr ? typeid(void) : meta_->type_(); }
 
   void reset() noexcept { value_addresser().swap(*this); }
-  template <class T, class A>
-  void assign(T&& val, A&& alloc)
-      { value_addresser(forward<T>(val), forward<A>(alloc)).swap(*this); }
+  template <class S_T, class A>
+  void assign(S_T&& val, A&& alloc)
+      { value_addresser(forward<S_T>(val), forward<A>(alloc)).swap(*this); }
   void swap(value_addresser& rhs) noexcept
       { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
 
@@ -235,17 +235,17 @@ class value_addresser {
   }
 
   template <class S_T>
-  explicit value_addresser(S_T&& value)
+  value_addresser(S_T&& value)
       : value_addresser(forward<S_T>(value), allocator<char>{}) {}
 
   template <class S_T, class A>
-  explicit value_addresser(S_T&& value, const A& alloc) : value_addresser() {
+  value_addresser(S_T&& value, const A& alloc) : value_addresser() {
     using T = p1648::sunk_t<S_T>;
     if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
       new(storage_.value_) T(p1648::sink(forward<S_T>(value)));
       meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
     } else {
-      using V = allocated_value<T, A>;
+      using V = erased_detail::allocated_value<T, A>;
       using Alloc = typename V::Alloc;
       Alloc real_alloc(alloc);
       V* ptr = allocator_traits<Alloc>::allocate(real_alloc, 1u);
@@ -287,7 +287,7 @@ class reference_addresser {
  protected:
   reference_addresser(const reference_addresser&) noexcept = default;
   template <class T>
-  explicit reference_addresser(T& value) noexcept
+  reference_addresser(T& value) noexcept
       : meta_(in_place_type<decay_t<T>>), ptr_(&value) {}
 
   reference_addresser& operator=(const reference_addresser& rhs)
