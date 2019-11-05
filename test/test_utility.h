@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <random>
 #include <chrono>
+#include <atomic>
 #include <thread>
 
 namespace test {
