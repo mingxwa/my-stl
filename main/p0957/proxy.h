@@ -13,7 +13,6 @@
 #include <memory>
 
 #include "../p1144/trivially_relocatable.h"
-#include "../p1648/sinking.h"
 
 namespace std::p0957 {
 
@@ -77,19 +76,6 @@ class null_value_addresser_error : public logic_error {
 
 namespace erased_detail {
 
-template <class T, class A>
-struct allocated_value {
-  using Alloc = typename allocator_traits<A>
-      ::template rebind_alloc<allocated_value>;
-
-  template <class _T>
-  explicit allocated_value(_T&& value, const A& alloc)
-      : value_(p1648::sink(forward<_T>(value))), alloc_(alloc) {}
-
-  T value_;
-  Alloc alloc_;
-};
-
 template <class T, size_t SIZE, size_t ALIGN>
 inline constexpr bool VALUE_USES_SBO = sizeof(T) <= SIZE
     && alignof(T) <= ALIGN && p1144::is_trivially_relocatable_v<T>;
@@ -152,9 +138,6 @@ struct erased_value_selector {
 
 namespace meta_detail {
 
-template <class M, class... T>
-inline constexpr M META_STORAGE{in_place_type<T>...};
-
 template <class M, bool SBO = sizeof(M) <= sizeof(void*)>
 struct reference_meta { using type = M; };
 
@@ -165,47 +148,34 @@ struct reference_meta<M, false> {
     type(const type&) = default;
     explicit type(const M& rhs) { ptr_ = &rhs; }
     template <class T>
-    explicit type(in_place_type_t<T>) { ptr_ = &META_STORAGE<M, T>; }
+    explicit type(in_place_type_t<T>) { ptr_ = &META<T>; }
     type& operator=(const type&) = default;
 
     operator const M&() const { return *ptr_; }
 
     const M* ptr_;
   };
+
+  template <class T>
+  static constexpr M META{in_place_type<T>};
 };
 
+template <class T> const type_info& get_type() { return typeid(T); }
 template <class T>
 void destroy_small_value(void* erased) { static_cast<T*>(erased)->~T(); }
-
-template <class T, class A>
-void destroy_large_value(void* erased) {
-  using V = erased_detail::allocated_value<T, A>;
-  using Alloc = typename V::Alloc;
-  V* p = *static_cast<V**>(erased);
-  Alloc alloc = move(p->alloc_);
-  p->~V();
-
-  // Requires: V* shall be convertible to Alloc::typename pointer
-  allocator_traits<Alloc>::deallocate(alloc, p, 1u);
-}
-
-template <class T> const type_info& get_type() { return typeid(T); }
+template <class T>
+void destroy_large_value(void* erased) { delete *static_cast<T**>(erased); }
 
 template <class M>
 struct value_meta {
   template <class T>
-  constexpr explicit value_meta(in_place_type_t<T>)
-      : core_(in_place_type<T>), destroy_(destroy_small_value<T>),
-        type_(get_type<T>) {}
-
-  template <class T, class A>
-  constexpr explicit value_meta(in_place_type_t<T>, in_place_type_t<A>)
-      : core_(in_place_type<T>), destroy_(destroy_large_value<T, A>),
-        type_(get_type<T>) {}
+  constexpr explicit value_meta(in_place_type_t<T>, bool uses_sbo)
+      : core_(in_place_type<T>), type_(get_type<T>),
+        destroy_(uses_sbo ? destroy_small_value<T> : destroy_large_value<T>) {}
 
   M core_;
-  void (*destroy_)(void*);
   const type_info&(*type_)();
+  void (*destroy_)(void*);
 };
 
 }  // namespace meta_detail
@@ -220,11 +190,18 @@ class value_addresser {
       { return meta_ == nullptr ? typeid(void) : meta_->type_(); }
 
   void reset() noexcept { value_addresser().swap(*this); }
-  template <class S_T, class A>
-  void assign(S_T&& val, A&& alloc)
-      { value_addresser(forward<S_T>(val), forward<A>(alloc)).swap(*this); }
   void swap(value_addresser& rhs) noexcept
       { std::swap(meta_, rhs.meta_); std::swap(storage_, rhs.storage_); }
+  template <class T, class... Args>
+  T& emplace(Args&&... args) {
+    reset();
+    value_addresser(in_place_type<T>, forward<Args>(args)...).swap(*this);
+    if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
+      return *static_cast<T*>(&storage_.value_);
+    } else {
+      return *static_cast<T*>(storage_.ptr_);
+    }
+  }
 
  protected:
   value_addresser() noexcept : meta_(nullptr) {}
@@ -234,37 +211,26 @@ class value_addresser {
     rhs.meta_ = nullptr;
   }
 
-  template <class S_T>
-  value_addresser(S_T&& value)
-      : value_addresser(forward<S_T>(value), allocator<char>{}) {}
+  template <class T>
+  value_addresser(T&& value)
+      : value_addresser(in_place_type<decay_t<T>>, forward<T>(value)) {}
 
-  template <class S_T, class A>
-  value_addresser(S_T&& value, const A& alloc) : value_addresser() {
-    using T = p1648::sunk_t<S_T>;
+  template <class T, class... Args>
+  value_addresser(in_place_type_t<T>, Args&&... args) : value_addresser() {
     if constexpr (erased_detail::VALUE_USES_SBO<T, SIZE, ALIGN>) {
-      new(storage_.value_) T(p1648::sink(forward<S_T>(value)));
-      meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T>;
+      new(storage_.value_) T(forward<Args>(args)...);
+      meta_ = &META<T, true>;
     } else {
-      using V = erased_detail::allocated_value<T, A>;
-      using Alloc = typename V::Alloc;
-      Alloc real_alloc(alloc);
-      V* ptr = allocator_traits<Alloc>::allocate(real_alloc, 1u);
-      try {
-        new(ptr) V(forward<S_T>(value), move(real_alloc));
-      } catch (...) {
-        allocator_traits<Alloc>::deallocate(real_alloc, ptr, 1u);
-        throw;
-      }
-      storage_.ptr_ = ptr;
-      meta_ = &meta_detail::META_STORAGE<meta_detail::value_meta<M>, T, A>;
+      storage_.ptr_ = new T(forward<Args>(args)...);
+      meta_ = &META<T, false>;
     }
   }
 
   value_addresser& operator=(value_addresser&& rhs) noexcept
       { swap(rhs); return *this; }
-  template <class S_T>
-  value_addresser& operator=(S_T&& value)
-      { return *this = value_addresser{value}; }
+  template <class T>
+  value_addresser& operator=(T&& value)
+      { return *this = value_addresser{forward<T>(value)}; }
 
   ~value_addresser() { if (meta_ != nullptr) { meta_->destroy_(&storage_); } }
 
@@ -280,6 +246,9 @@ class value_addresser {
  private:
   const meta_detail::value_meta<M>* meta_;
   storage_t storage_;
+
+  template <class T, bool USES_SBO>
+  static constexpr meta_detail::value_meta<M> META{in_place_type<T>, USES_SBO};
 };
 
 template <class M, qualification_type Q>
