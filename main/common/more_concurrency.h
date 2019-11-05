@@ -12,8 +12,6 @@
 #include <atomic>
 #include <functional>
 
-#include "../p1648/sinking.h"
-
 namespace aid {
 
 namespace detail {
@@ -125,8 +123,7 @@ class concurrent_collector {
 
   struct value_node : node {
     template <class U>
-    explicit value_node(U&& value)
-        : value_(std::p1648::sink(std::forward<U>(value))) {}
+    explicit value_node(U&& value) : value_(std::forward<U>(value)) {}
 
     T value_;
   };

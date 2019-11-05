@@ -27,10 +27,12 @@ int main() {
       ctx.str = "Awesome!";
     })};
 
+  auto ctx = std::p0642::prepare_concurrent_context<context>();
+
   auto continuation = std::p0642::async_concurrent_continuation{
       aid::in_place_executor{}, [](context&& data) { data.print(); }};
 
-  std::p0642::concurrent_invoke(csa, std::in_place_type<context>, continuation);
+  std::p0642::concurrent_invoke(csa, ctx, continuation);
 
   puts("Main exit...");
 }

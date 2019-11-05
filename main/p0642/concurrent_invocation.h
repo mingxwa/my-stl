@@ -14,30 +14,42 @@
 #include <atomic>
 #include <future>
 
-#include "../p1648/sinking.h"
 #include "../common/more_utility.h"
 #include "../common/more_concurrency.h"
 
 namespace std::p0642 {
 
-template <class CSA, class S_CTX, class CT>
-void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct);
-template <class CSA, class S_CTX = in_place_type_t<void>>
-auto concurrent_invoke(CSA&& csa, S_CTX&& ctx = S_CTX{});
+template <class T, class... Args>
+class concurrent_context_preparation;
+
+template <class CSA, class CTX_P, class CT>
+void concurrent_invoke(CSA&& csa, CTX_P&& ctx, CT&& ct);
+template <class CSA, class CTX_P = concurrent_context_preparation<void>>
+auto concurrent_invoke(CSA&& csa, CTX_P&& ctx = CTX_P{});
 
 template <class CTX, class CB> class concurrent_token;
 template <class CT> class async_concurrent_callback;
 
 namespace detail {
 
-template <class S_CTX>
-decltype(auto) forward_context(S_CTX&& ctx) {
-  if constexpr (is_void_v<p1648::sunk_t<S_CTX>>) {
-    return tuple<>{};
-  } else {
-    return forward<S_CTX>(ctx);
-  }
-}
+template <class T>
+struct context_traits {
+  using type = T;
+  template <class U>
+  static conditional_t<is_same_v<T, U>, T&&, T> build(U&& value)
+      { return forward<U>(value); }
+};
+template <class T, class... Args>
+struct context_traits<concurrent_context_preparation<T, Args...>> {
+  using type = T;
+  template <class U> static T build(U&& value)
+      { return make_from_tuple<T>(forward<U>(value).get_args()); }
+};
+template <>
+struct context_traits<concurrent_context_preparation<void>> {
+  using type = void;
+  template <class U> static tuple<> build(U&&) { return {}; }
+};
 
 template <class SFINAE, class CTX>
 struct sfinae_is_context_reducible : false_type {};
@@ -61,11 +73,39 @@ inline bool constexpr is_concurrent_session
 
 }  // namespace detail
 
-class invalid_concurrent_breakpoint : public logic_error {
+template <class T, class... Args>
+class concurrent_context_preparation {
  public:
-  explicit invalid_concurrent_breakpoint()
-      : logic_error("Invalid concurrent breakpoint") {}
+  template <class... _Args>
+  constexpr explicit concurrent_context_preparation(_Args&&... args)
+      : args_(forward<_Args>(args)...) {}
+
+  constexpr concurrent_context_preparation(
+      concurrent_context_preparation&&) = default;
+  constexpr concurrent_context_preparation(
+      const concurrent_context_preparation&) = default;
+  constexpr concurrent_context_preparation& operator=(
+      concurrent_context_preparation&&) = default;
+  constexpr concurrent_context_preparation& operator=(
+      const concurrent_context_preparation&) = default;
+
+  constexpr tuple<Args...> get_args() const& { return args_; }
+  constexpr tuple<Args...>&& get_args() && noexcept { return move(args_); }
+
+ private:
+  tuple<Args...> args_;
 };
+
+template <class T, class... Args>
+auto prepare_concurrent_context(Args&&... args) {
+  return concurrent_context_preparation<T, decay_t<Args>...>(
+      forward<Args>(args)...);
+}
+template <class T, class U, class... Args>
+auto prepare_concurrent_context(initializer_list<U> il,  Args&&... args) {
+  return concurrent_context_preparation<
+      T, initializer_list<U>, decay_t<Args>...>(il, forward<Args>(args)...);
+}
 
 template <class CTX = void>
 class concurrent_invocation_error : public runtime_error {
@@ -99,10 +139,10 @@ class concurrent_invocation_error<void> : public runtime_error {
 
 template <class CTX, class CB>
 class concurrent_breakpoint {
-  template <class CSA, class S_CTX, class CT>
-  friend void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct);
-  template <class CSA, class S_CTX>
-  friend auto concurrent_invoke(CSA&& csa, S_CTX&& ctx);
+  template <class CSA, class CTX_P, class CT>
+  friend void concurrent_invoke(CSA&& csa, CTX_P&& ctx, CT&& ct);
+  template <class CSA, class CTX_P>
+  friend auto concurrent_invoke(CSA&& csa, CTX_P&& ctx);
   friend class concurrent_token<CTX, CB>;
   template <class> friend class async_concurrent_callback;
 
@@ -118,9 +158,10 @@ class concurrent_breakpoint {
       { if constexpr (!is_void_v<CTX>) { return ctx_; } }
 
  private:
-  template <class S_CTX, class _CB>
-  explicit concurrent_breakpoint(S_CTX&& ctx, _CB&& cb)
-      : ctx_(p1648::sink(forward<S_CTX>(ctx))), cb_(forward<_CB>(cb)) {}
+  template <class CTX_P, class _CB>
+  explicit concurrent_breakpoint(CTX_P&& ctx, _CB&& cb)
+      : ctx_(detail::context_traits<decay_t<CTX_P>>
+          ::build(forward<CTX_P>(ctx))), cb_(forward<_CB>(cb)) {}
 
   template <class CSA>
   void invoke(CSA&& csa) {
@@ -193,16 +234,10 @@ class concurrent_token {
 
   bool is_valid() const noexcept { return static_cast<bool>(bp_); }
   void reset() noexcept { bp_.reset(); }
-  breakpoint& get() const {
-    if (!is_valid()) { throw invalid_concurrent_breakpoint{}; }
-    return *bp_.get();
-  }
+  breakpoint& get() const { return *bp_.get(); }
 
-  void set_exception(exception_ptr&& p) {
-    if (!is_valid()) { throw invalid_concurrent_breakpoint{}; }
-    auto bp = move(bp_);
-    bp->exceptions_.push(move(p));
-  }
+  void set_exception(exception_ptr&& p)
+      { auto bp = move(bp_); bp->exceptions_.push(move(p)); }
 
  private:
   explicit concurrent_token(breakpoint* bp) : bp_(bp) {}
@@ -331,22 +366,22 @@ class async_concurrent_callback {
   CT ct_;
 };
 
-template <class CSA, class S_CTX, class CT>
-void concurrent_invoke(CSA&& csa, S_CTX&& ctx, CT&& ct) {
+template <class CSA, class CTX_P, class CT>
+void concurrent_invoke(CSA&& csa, CTX_P&& ctx, CT&& ct) {
   using CB = async_concurrent_callback<decay_t<CT>>;
-  (new concurrent_breakpoint<p1648::sunk_t<S_CTX>, CB>{
-      detail::forward_context(forward<S_CTX>(ctx)), CB{forward<CT>(ct)}})
+  (new concurrent_breakpoint<
+      typename detail::context_traits<decay_t<CTX_P>>::type, CB>{
+          forward<CTX_P>(ctx), CB{forward<CT>(ct)}})
       ->invoke(forward<CSA>(csa));
 }
 
-template <class CSA, class S_CTX>
-auto concurrent_invoke(CSA&& csa, S_CTX&& ctx) {
-  using CTX = p1648::sunk_t<S_CTX>;
+template <class CSA, class CTX_P>
+auto concurrent_invoke(CSA&& csa, CTX_P&& ctx) {
+  using CTX = typename detail::context_traits<decay_t<CTX_P>>::type;
   promise<void> p;
   future<void> f = p.get_future();
   concurrent_breakpoint<CTX, sync_concurrent_callback> bp{
-      detail::forward_context(forward<S_CTX>(ctx)),
-      sync_concurrent_callback{move(p)}};
+      forward<CTX_P>(ctx), sync_concurrent_callback{move(p)}};
   bp.invoke(forward<CSA>(csa));
   f.get();
   auto exceptions = bp.exceptions_.reduce();

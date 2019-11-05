@@ -49,6 +49,6 @@ int main() {
 
   printf("Start executing with %d threads...\n", THREADS);
   int who_wins = std::p0642::concurrent_invoke(csa,
-      std::in_place_type<context>);
+      std::p0642::prepare_concurrent_context<context>());
   printf("All set! Task %d wins.\n", who_wins);
 }

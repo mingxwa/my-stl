@@ -38,7 +38,9 @@ int main() {
     }
   }};
 
-  std::p0642::concurrent_invoke(csa, std::in_place_type<void>, continuation);
+  auto ctx = std::p0642::prepare_concurrent_context<void>();
+
+  std::p0642::concurrent_invoke(csa, ctx, continuation);
 
   puts("Main exit...");
 }

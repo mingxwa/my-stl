@@ -11,7 +11,6 @@
 #include <mutex>
 #include <condition_variable>
 
-#include "../p1648/sinking.h"
 #include "../p0957/proxy.h"
 #include "../p0957/mock/proxy_callable_impl.h"
 #include "../p0642/concurrent_invocation.h"
@@ -49,8 +48,7 @@ template <class Event = p0957::value_proxy<Callable<void()>>,
 class static_thread_pool {
   struct context {
     template <class _EventConsumer>
-    explicit context(_EventConsumer&& ec)
-        : ec_(p1648::sink(forward<_EventConsumer>(ec))) {}
+    explicit context(_EventConsumer&& ec) : ec_(forward<_EventConsumer>(ec)) {}
     context(context&&) = delete;
 
     mutex mtx_;
@@ -89,7 +87,7 @@ class static_thread_pool {
 
     auto csa = tuple{detail::initiating_session{&token_},
         vector<decltype(single_worker)>{thread_count, single_worker}};
-    auto ctx = p1648::make_sinking_construction<context>(
+    auto ctx = p0642::prepare_concurrent_context<context>(
         forward<_EventConsumer>(ec));
     auto ct = detail::global_concurrency_decrement_continuation{};
 
@@ -126,7 +124,7 @@ class static_thread_pool {
     template <class _EventConsumer>
     void reset(_EventConsumer&& ec) const {
       lock_guard<mutex> lk(ctx_->mtx_);
-      ctx_->ec_ = p1648::sink(forward<_EventConsumer>(ec));
+      ctx_->ec_ = forward<_EventConsumer>(ec);
     }
 
    private:

@@ -32,9 +32,11 @@ int main() {
       ctx.str = "Awesome!";
     })};
 
+  auto ctx = std::p0642::prepare_concurrent_context<context>();
+
   // Perform blocking concurrent invocation with the CSA. context will
   // be default-constructed for collaboration.
-  auto result = std::p0642::concurrent_invoke(csa, std::in_place_type<context>);
+  auto result = std::p0642::concurrent_invoke(csa, ctx);
 
   result.print();
 }

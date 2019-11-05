@@ -8,8 +8,6 @@
 #include <type_traits>
 #include <utility>
 #include <typeinfo>
-#include <initializer_list>
-#include <stdexcept>
 #include <memory>
 
 #include "../p1144/trivially_relocatable.h"
@@ -67,12 +65,6 @@ inline constexpr qualification_type qualification_of_v
 
 template <class T, reference_type R>
 using add_reference_t = conditional_t<R == reference_type::lvalue, T&, T&&>;
-
-class null_value_addresser_error : public logic_error {
- public:
-  explicit null_value_addresser_error()
-      : logic_error("The value addresser is not representing a value") {}
-};
 
 namespace erased_detail {
 
@@ -234,10 +226,7 @@ class value_addresser {
 
   ~value_addresser() { if (meta_ != nullptr) { meta_->destroy_(&storage_); } }
 
-  const M& meta() const {
-    if (meta_ == nullptr) { throw null_value_addresser_error{}; }
-    return meta_->core_;
-  }
+  const M& meta() const { return meta_->core_; }
   storage_t& erased() & { return storage_; }
   storage_t&& erased() && { return move(storage_); }
   const storage_t& erased() const& { return storage_; }
