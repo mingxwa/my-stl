@@ -13,7 +13,7 @@
  *
  * template <class R, class... Args>
  * facade Callable<R(Args...)> {
- *   R operator()(Args...) &&;
+ *   R operator()(Args...) &;
  * };
  */
 
@@ -38,7 +38,7 @@ struct proxy_meta<Callable<R(Args...)>, E> {
 
  private:
   template <class T>
-  static R f0(E<qualification_type::none, reference_type::rvalue> erased,
+  static R f0(E<qualification_type::none, reference_type::lvalue> erased,
       Args&&... args) {
     if constexpr (is_void_v<R>) {
       erased.template cast<T>()(forward<Args>(args)...);
@@ -47,7 +47,7 @@ struct proxy_meta<Callable<R(Args...)>, E> {
     }
   }
 
-  R (*f0_)(E<qualification_type::none, reference_type::rvalue>, Args&&...);
+  R (*f0_)(E<qualification_type::none, reference_type::lvalue>, Args&&...);
 };
 
 template <class R, class... Args, class A>
@@ -66,8 +66,8 @@ class proxy<Callable<R(Args...)>, A> : public A {
     return *this;
   }
 
-  R operator()(Args... args) && {
-    return A::meta().f0_(move(*this).A::erased(), forward<Args>(args)...);
+  R operator()(Args... args) & {
+    return A::meta().f0_(A::erased(), forward<Args>(args)...);
   }
 };
 
