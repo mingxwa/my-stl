@@ -80,6 +80,11 @@ class FcDemo1 {
  public:
   explicit FcDemo1(int num) : num_(num) {}
 
+  FcDemo1(const FcDemo1& rhs) : num_(rhs.num_) {
+    puts("FcDemo1: copy ctor called");
+    printf("Check: %d\n\n", num_);
+  }
+
   int fun_a_0() {
     puts("FcDemo1: fun_a_0 called");
     printf("Check: %d\n\n", num_);
@@ -110,7 +115,7 @@ class FcDemo1 {
 };
 
 int main() {
-  std::p0957::value_proxy<FC> p1(FcDemo1{8});
+  std::p0957::copyable_value_proxy<FC> p1(FcDemo1{8});
 
   // FcDemo1::fun_a_0() is called.
   p1.fun_a_0();
@@ -126,17 +131,19 @@ int main() {
   // FcDemo1::fun_c() is called.
   p1.fun_c();
 
-  auto value = FcDemo1{10};
-  std::p0957::reference_proxy<FB> p2(value);
-
-  // FcDemo1::fun_b(value_proxy<FA>) is called
-  p2.fun_b(FaDemo1{456});
-
   p1.emplace<FcDemo1>(23);
 
   p1.fun_a_0();
 
+  auto p2 = p1;
+
   p1.reset();
 
   puts(p1.has_value() ? "Valid state" : "Invalid State");
+
+  auto value = FcDemo1{10};
+  std::p0957::reference_proxy<FB> p3(value);
+
+  // FcDemo1::fun_b(value_proxy<FA>) is called
+  p3.fun_b(FaDemo1{456});
 }

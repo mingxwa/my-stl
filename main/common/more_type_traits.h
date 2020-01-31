@@ -10,7 +10,7 @@
 
 namespace aid {
 
-namespace aggregation_tratis_detail {
+namespace detail {
 
 template <class SFINAE, class T>
 struct sfinae_tuple_traits : std::false_type {};
@@ -27,15 +27,22 @@ struct sfinae_container_traits<std::void_t<
     decltype(std::declval<T>().begin() != std::declval<T>().end())>, T>
     : std::true_type {};
 
-}  // namespace aggregation_tratis_detail
+template <class T, class... U> struct is_qualified_same : std::false_type {};
+template <class T, class U> struct is_qualified_same<T, U>
+    : std::is_same<T, std::decay_t<U>> {};
+
+}  // namespace detail
 
 template <class T>
-inline constexpr bool is_tuple_v
-    = aggregation_tratis_detail::sfinae_tuple_traits<void, T>::value;
+inline constexpr bool is_tuple_v = detail::sfinae_tuple_traits<void, T>::value;
 
 template <class T>
 inline constexpr bool is_container_v
-    = aggregation_tratis_detail::sfinae_container_traits<void, T>::value;
+    = detail::sfinae_container_traits<void, T>::value;
+
+template <class T, class... U>
+inline constexpr bool is_qualified_same_v
+    = detail::is_qualified_same<T, U...>::value;
 
 }  // namespace aid
 

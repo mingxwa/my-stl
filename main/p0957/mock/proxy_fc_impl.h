@@ -67,11 +67,12 @@ class proxy<FC, A> : public A {
  public:
   proxy(const proxy&) = default;
   proxy(proxy&&) = default;
-  template <class... _Args>
+  template <class... _Args, class = enable_if_t<
+      !aid::is_qualified_same_v<proxy, _Args...>>>
   proxy(_Args&&... args) : A(forward<_Args>(args)...) {}
   proxy& operator=(const proxy& rhs) = default;
   proxy& operator=(proxy&& rhs) = default;
-  template <class T>
+  template <class T, class = enable_if_t<!aid::is_qualified_same_v<proxy, T>>>
   proxy& operator=(T&& value) {
     A::operator=(forward<T>(value));
     return *this;

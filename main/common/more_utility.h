@@ -12,7 +12,7 @@
 
 #include "./more_type_traits.h"
 
-#define STATIC_ASSERT_FALSE(...) static_assert(sizeof(__VA_ARGS__) == 0)
+#define STATIC_ASSERT_FALSE(...) static_assert(sizeof(__VA_ARGS__) < 0)
 
 namespace aid {
 
@@ -44,10 +44,10 @@ void for_each_in_container(Container&& c, F&& f) {
 template <class T, class F>
 void for_each_in_aggregation(T&& value, F&& f);
 
-namespace for_each_detail {
+namespace detail {
 
 template <class F>
-struct applier {
+struct for_each_applier {
   template <class T>
   void operator()(T&& value) const
       { for_each_in_aggregation(std::forward<T>(value), std::forward<F>(f_)); }
@@ -61,7 +61,8 @@ struct sfinae_for_each_traits;
 template <class T, class F>
 struct sfinae_for_each_traits<std::enable_if_t<is_tuple_v<T>>, T, F> {
   static inline void apply(T&& value, F&& f) {
-    for_each_in_tuple(std::forward<T>(value), applier<F>{std::forward<F>(f)});
+    for_each_in_tuple(std::forward<T>(value),
+        for_each_applier<F>{std::forward<F>(f)});
   }
 };
 
@@ -69,7 +70,7 @@ template <class T, class F>
 struct sfinae_for_each_traits<std::enable_if_t<is_container_v<T>>, T, F> {
   static inline void apply(T&& value, F&& f) {
     for_each_in_container(std::forward<T>(value),
-        applier<F>{std::forward<F>(f)});
+        for_each_applier<F>{std::forward<F>(f)});
   }
 };
 
@@ -80,11 +81,11 @@ struct sfinae_for_each_traits<
       { std::invoke(std::forward<F>(f), std::forward<T>(value)); }
 };
 
-}  // namespace for_each_detail
+}  // namespace detail
 
 template <class T, class F>
 void for_each_in_aggregation(T&& value, F&& f) {
-  for_each_detail::sfinae_for_each_traits<void, T, F>
+  detail::sfinae_for_each_traits<void, T, F>
       ::apply(std::forward<T>(value), std::forward<F>(f));
 }
 

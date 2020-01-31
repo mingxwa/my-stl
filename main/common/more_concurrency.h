@@ -79,7 +79,7 @@ struct thread_executor {
   void execute(F&& f) const {
     increase_global_concurrency(1u);
     std::thread{[f = std::forward<F>(f)]() mutable {
-      std::invoke(std::move(f));
+      std::invoke(f);
       decrease_global_concurrency();
     }}.detach();
   }
