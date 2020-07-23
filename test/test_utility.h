@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
 #ifndef SRC_TEST_TEST_UTILITY_H_

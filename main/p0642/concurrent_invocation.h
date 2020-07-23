@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
 #ifndef SRC_MAIN_P0642_CONCURRENT_INVOCATION_H_
@@ -14,8 +15,8 @@
 #include <atomic>
 #include <future>
 
-#include "../common/more_utility.h"
-#include "../common/more_concurrency.h"
+#include "./more_utility.h"
+#include "./more_concurrency.h"
 
 namespace std::p0642 {
 

@@ -1,9 +1,10 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
-#ifndef SRC_MAIN_COMMON_MORE_CONCURRENCY_H_
-#define SRC_MAIN_COMMON_MORE_CONCURRENCY_H_
+#ifndef SRC_MAIN_P0642_MORE_CONCURRENCY_H_
+#define SRC_MAIN_P0642_MORE_CONCURRENCY_H_
 
 #include <utility>
 #include <vector>
@@ -50,7 +51,7 @@ class global_concurrency_manager {
     if (concurrency_.fetch_sub(1u, std::memory_order_relaxed) != 1u) {
       {
         std::unique_lock<std::mutex> lk{mtx_};
-        cond_.wait(lk, [=] { return finished_; });
+        cond_.wait(lk, [this] { return this->finished_; });
       }
       while (concurrency_.load(std::memory_order_relaxed) != 0u)
           { std::this_thread::yield(); }
@@ -134,4 +135,4 @@ class concurrent_collector {
 
 }  // namespace aid
 
-#endif  // SRC_MAIN_COMMON_MORE_CONCURRENCY_H_
+#endif  // SRC_MAIN_P0642_MORE_CONCURRENCY_H_

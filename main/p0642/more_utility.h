@@ -1,16 +1,15 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
-#ifndef SRC_MAIN_COMMON_MORE_UTILITY_H_
-#define SRC_MAIN_COMMON_MORE_UTILITY_H_
+#ifndef SRC_MAIN_P0642_MORE_UTILITY_H_
+#define SRC_MAIN_P0642_MORE_UTILITY_H_
 
 #include <utility>
 #include <type_traits>
 #include <tuple>
 #include <functional>
-
-#include "./more_type_traits.h"
 
 #define STATIC_ASSERT_FALSE(...) static_assert(sizeof(__VA_ARGS__) < 0)
 
@@ -46,6 +45,21 @@ void for_each_in_aggregation(T&& value, F&& f);
 
 namespace detail {
 
+template <class SFINAE, class T>
+struct sfinae_tuple_traits : std::false_type {};
+
+template <class T>
+struct sfinae_tuple_traits<std::void_t<decltype(
+    std::tuple_size<std::decay_t<T>>::value)>, T> : std::true_type {};
+
+template <class SFINAE, class T>
+struct sfinae_container_traits : std::false_type {};
+
+template <class T>
+struct sfinae_container_traits<std::void_t<
+    decltype(std::declval<T>().begin() != std::declval<T>().end())>, T>
+    : std::true_type {};
+
 template <class F>
 struct for_each_applier {
   template <class T>
@@ -59,7 +73,8 @@ template <class SFINAE, class T, class F>
 struct sfinae_for_each_traits;
 
 template <class T, class F>
-struct sfinae_for_each_traits<std::enable_if_t<is_tuple_v<T>>, T, F> {
+struct sfinae_for_each_traits<std::enable_if_t<
+    sfinae_tuple_traits<void, T>::value>, T, F> {
   static inline void apply(T&& value, F&& f) {
     for_each_in_tuple(std::forward<T>(value),
         for_each_applier<F>{std::forward<F>(f)});
@@ -67,7 +82,8 @@ struct sfinae_for_each_traits<std::enable_if_t<is_tuple_v<T>>, T, F> {
 };
 
 template <class T, class F>
-struct sfinae_for_each_traits<std::enable_if_t<is_container_v<T>>, T, F> {
+struct sfinae_for_each_traits<std::enable_if_t<
+    sfinae_container_traits<void, T>::value>, T, F> {
   static inline void apply(T&& value, F&& f) {
     for_each_in_container(std::forward<T>(value),
         for_each_applier<F>{std::forward<F>(f)});
@@ -91,4 +107,4 @@ void for_each_in_aggregation(T&& value, F&& f) {
 
 }  // namespace aid
 
-#endif  // SRC_MAIN_COMMON_MORE_UTILITY_H_
+#endif  // SRC_MAIN_P0642_MORE_UTILITY_H_

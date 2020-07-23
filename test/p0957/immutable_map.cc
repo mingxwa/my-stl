@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
 #include <map>
@@ -7,26 +8,38 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <optional>
+#include <memory>
 
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_immutable_map_impl.h"
 
-void do_something_with_map(std::p0957::reference_proxy<
-    const ImmutableMap<int, std::string>> m) {
+//namespace std::p0957 {
+//
+//template <>
+//struct global_proxy_config<IImmutableMap<int, std::string>>
+//    : default_proxy_config {
+//  static constexpr type_requirements_level copyability
+//      = type_requirements_level::nontrivial;
+//};
+//
+//}  // namespace std::p0957
+
+void do_something_with_map(std::p0957::proxy<IImmutableMap<int, std::string>> m) {
+  // std::p0957::proxy<IImmutableMap<int, std::string>> p = m;
   try {
-    std::cout << m.at(1) << std::endl;
+    std::cout << (*p).at(1) << std::endl;
   } catch (const std::out_of_range& e) {
-    std::cout << "Out of range: " << e.what() << std::endl;
+    std::cout << "No such element: " << e.what() << std::endl;
   }
 }
 
 int main() {
   std::map<int, std::string> var1{{1, "Hello"}};
   std::unordered_map<int, std::string> var2{{2, "CPP"}};
-  std::vector<std::string> var3{"I", "love", "PFA", "!"};
-  std::map<int, std::string> var4{};
-  do_something_with_map(var1);
-  do_something_with_map(var2);
-  do_something_with_map(var3);
-  do_something_with_map(var4);
+  std::vector<std::string> var3{"I", "love", "Proxy", "!"};
+  do_something_with_map(&var1);
+  do_something_with_map(&var2);
+  do_something_with_map(&var3);
+  do_something_with_map(std::make_shared<std::map<int, std::string>>());
 }

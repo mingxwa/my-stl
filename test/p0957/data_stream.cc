@@ -1,10 +1,12 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
 #include <cstdio>
 #include <queue>
 #include <string>
+#include <memory>
 
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_data_stream_impl.h"
@@ -18,7 +20,7 @@ class iterable_source {
 
   auto next() { return std::move(*(fitst_++)); }
 
-  bool has_next() const { return fitst_ != last_; }
+  bool has_next() const noexcept { return fitst_ != last_; }
 
  private:
   Iterator fitst_, last_;
@@ -33,7 +35,7 @@ class fifo_source {
     return result;
   }
 
-  bool has_next() const {
+  bool has_next() const noexcept {
     return !q_.empty();
   }
 
@@ -47,13 +49,12 @@ class fifo_source {
 };
 
 int main() {
-  fifo_source<int> s1;
+  std::unique_ptr<fifo_source<int>> s1 = std::make_unique<fifo_source<int>>();
   for (int i = 0; i < 10; ++i) {
-    s1.emplace(i);
+    s1->emplace(i);
   }
-  std::p0957::reference_proxy<DataStream<double>> p(s1);
-  p = s1;
-  while (p.has_next()) {
-    printf("%f\n", p.next());
+  std::p0957::proxy<IDataStream<double>> p(std::move(s1));
+  while (p.value().has_next()) {
+    printf("%f\n", (*p).next());
   }
 }

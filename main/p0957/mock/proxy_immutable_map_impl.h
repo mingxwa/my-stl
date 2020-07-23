@@ -1,5 +1,6 @@
 /**
- * Copyright (c) 2018-2019 Mingxin Wang. All rights reserved.
+ * Copyright (c) Microsoft Corporation. All rights reserved.
+ * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
 #ifndef SRC_MAIN_P0957_MOCK_PROXY_IMMUTABLE_MAP_IMPL_H_
@@ -7,65 +8,34 @@
 
 #include <utility>
 
-/**
- * template <class K, class V>
- * facade ImmutableMap {
- *   const V& at(const K&) const;
- * };
- */
-
-template <class, class>
-struct ImmutableMap;
-
-namespace std::p0957 {
-
-template <class K, class V,
-    template <qualification_type, reference_type> class E>
-struct proxy_meta<ImmutableMap<K, V>, E> {
-  template <class, class>
-  friend class proxy;
-
- public:
-  template <class T>
-  constexpr explicit proxy_meta(in_place_type_t<T>) noexcept : f0_(f0<T>) {}
-
-  constexpr proxy_meta() = default;
-  constexpr proxy_meta(const proxy_meta&) noexcept = default;
-  constexpr proxy_meta& operator=(const proxy_meta&) noexcept = default;
-
- private:
-  template <class T>
-  static const V& f0(
-      E<qualification_type::const_qualified, reference_type::lvalue> erased,
-      const K& arg_0) {
-    return erased.template cast<T>().at(arg_0);
-  }
-
-  const V& (*f0_)(
-      E<qualification_type::const_qualified, reference_type::lvalue>, const K&);
+template <class K, class V>
+struct IImmutableMap {
+  virtual const V& at(const K&) const;
 };
 
-template <class K, class V, class A>
-class proxy<ImmutableMap<K, V>, A> : public A {
- public:
-  proxy(const proxy&) = default;
-  proxy(proxy&&) = default;
-  template <class... _Args, class = enable_if_t<
-      !aid::is_qualified_same_v<proxy, _Args...>>>
-  proxy(_Args&&... args) : A(forward<_Args>(args)...) {}
-  proxy& operator=(const proxy& rhs) = default;
-  proxy& operator=(proxy&& rhs) = default;
-  template <class T, class = enable_if_t<!aid::is_qualified_same_v<proxy, T>>>
-  proxy& operator=(T&& value) {
-    A::operator=(forward<T>(value));
-    return *this;
-  }
+namespace std::p0957::detail {
 
-  const V& at(const K& arg_0) const& {
-    return A::meta().f0_(A::erased(), arg_0);
-  }
+template <class K, class V>
+struct basic_proxy_meta<IImmutableMap<K, V>> {
+  template <class P>
+  constexpr explicit basic_proxy_meta(in_place_type_t<P>) noexcept
+      : f0([](const char& p, const K& arg_0) -> const V&
+            { return (*reinterpret_cast<const P&>(p)).at(arg_0); }) {}
+  basic_proxy_meta(const basic_proxy_meta&) = default;
+
+  const V& (*f0)(const char&, const K&);
 };
 
-}  // namespace std::p0957
+template <class P, class K, class V>
+struct erased<IImmutableMap<K, V>, P> : erased_base<IImmutableMap<K, V>, P> {
+  erased(const basic_proxy_meta<IImmutableMap<K, V>>& meta, P ptr)
+      : erased_base<IImmutableMap<K, V>, P>(meta, forward<P>(ptr)) {}
+  erased(const erased&) = default;
+
+  const V& at(const K& arg_0) const requires is_convertible_v<P, const char&>
+      { return this->meta_.f0(forward<P>(this->ptr_), arg_0); }
+};
+
+}  // namespace std::p0957::detail
 
 #endif  // SRC_MAIN_P0957_MOCK_PROXY_IMMUTABLE_MAP_IMPL_H_
