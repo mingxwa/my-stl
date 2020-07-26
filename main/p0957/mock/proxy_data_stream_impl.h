@@ -31,15 +31,20 @@ struct basic_proxy_meta<IDataStream<V>> {
 };
 
 template <class P, class V>
-struct erased<IDataStream<V>, P> : erased_base<IDataStream<V>, P> {
-  erased(const basic_proxy_meta<IDataStream<V>>& meta, P ptr)
-      : erased_base<IDataStream<V>, P>(meta, forward<P>(ptr)) {}
+class erased<IDataStream<V>, P> {
+ public:
+  explicit erased(const basic_proxy_meta<IDataStream<V>>& meta, P ptr)
+      : meta_(meta), ptr_(forward<P>(ptr)) {}
   erased(const erased&) = default;
 
   V next() const requires is_convertible_v<P, char&>
-      { return this->meta_.f0(forward<P>(this->ptr_)); }
+      { return meta_.f0(forward<P>(ptr_)); }
   bool has_next() const noexcept requires is_convertible_v<P, const char&>
-      { return this->meta_.f1(forward<P>(this->ptr_)); }
+      { return meta_.f1(forward<P>(ptr_)); }
+
+ private:
+  const basic_proxy_meta<IDataStream<V>>& meta_;
+  P ptr_;
 };
 
 }  // namespace std::p0957::detail

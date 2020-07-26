@@ -27,13 +27,18 @@ struct basic_proxy_meta<IImmutableMap<K, V>> {
 };
 
 template <class P, class K, class V>
-struct erased<IImmutableMap<K, V>, P> : erased_base<IImmutableMap<K, V>, P> {
-  erased(const basic_proxy_meta<IImmutableMap<K, V>>& meta, P ptr)
-      : erased_base<IImmutableMap<K, V>, P>(meta, forward<P>(ptr)) {}
+class erased<IImmutableMap<K, V>, P> {
+ public:
+  explicit erased(const basic_proxy_meta<IImmutableMap<K, V>>& meta, P ptr)
+      : meta_(meta), ptr_(forward<P>(ptr)) {}
   erased(const erased&) = default;
 
   const V& at(const K& arg_0) const requires is_convertible_v<P, const char&>
-      { return this->meta_.f0(forward<P>(this->ptr_), arg_0); }
+      { return meta_.f0(forward<P>(ptr_), arg_0); }
+
+ private:
+  basic_proxy_meta<IImmutableMap<K, V>> meta_;
+  P ptr_;
 };
 
 }  // namespace std::p0957::detail

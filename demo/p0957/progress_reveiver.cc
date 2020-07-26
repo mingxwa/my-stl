@@ -11,7 +11,7 @@
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_progress_receiver_impl.h"
 
-#include "../../main/experimental/thread_pool.h"
+#include "../../main/experimental/executors.h"
 
 void MyLibrary(std::p0957::proxy<IProgressReceiver> p) {
   constexpr std::size_t kTotal = 500;
@@ -137,5 +137,5 @@ void DemoForThreadPoolWithCancellation() {
 }
 
 int main() {
-  DemoForThread();
+  DemoForThreadPoolWithCancellation();
 }

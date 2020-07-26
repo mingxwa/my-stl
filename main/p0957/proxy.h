@@ -29,67 +29,73 @@ template <class I> struct global_proxy_config : default_proxy_config {};
 namespace detail {
 
 template <class I> struct basic_proxy_meta;
-template <class I, class P> struct erased;
+template <class I, class P> class erased;
 
-template <class I, class P>
-struct erased_base {
- protected:
-  explicit erased_base(const basic_proxy_meta<I>& meta, P ptr)
-      : meta_(meta), ptr_(forward<P>(ptr)) {}
-  erased_base(const erased_base&) = default;
+template <type_requirements_level> struct copyability_meta
+    { template <class _> constexpr explicit copyability_meta(_) {} };
+template <>
+struct copyability_meta<type_requirements_level::nothrow> {
+  template <class P>
+  constexpr explicit copyability_meta(in_place_type_t<P>)
+      : clone([](char* self, const char& rhs) noexcept
+          { new(self) P(reinterpret_cast<const P&>(rhs)); }) {}
 
-  conditional_t<(sizeof(basic_proxy_meta<I>) <= sizeof(void*)),
-      basic_proxy_meta<I>, const basic_proxy_meta<I>&> meta_;
-  P ptr_;
+  void (*clone)(char*, const char&) noexcept;
 };
-
-template <type_requirements_level R>
-struct copyability_meta {
+template <>
+struct copyability_meta<type_requirements_level::nontrivial> {
   template <class P>
   constexpr explicit copyability_meta(in_place_type_t<P>)
       : clone([](char* self, const char& rhs)
-          noexcept(R == type_requirements_level::nothrow)
           { new(self) P(reinterpret_cast<const P&>(rhs)); }) {}
 
-  void (*clone)(char*, const char&)
-      noexcept(R == type_requirements_level::nothrow);
+  void (*clone)(char*, const char&);
 };
-template <> struct copyability_meta<type_requirements_level::none>
-    { template <class _> constexpr explicit copyability_meta(_) {} };
-template <> struct copyability_meta<type_requirements_level::trivial>
-    { template <class _> constexpr explicit copyability_meta(_) {} };
 
-template <type_requirements_level R>
-struct relocatability_meta {
+template <type_requirements_level> struct relocatability_meta
+    { template <class _> constexpr explicit relocatability_meta(_) {} };
+template <>
+struct relocatability_meta<type_requirements_level::nothrow> {
   template <class P>
   constexpr explicit relocatability_meta(in_place_type_t<P>)
-      : relocate([](char* self, char&& rhs)
-          noexcept(R == type_requirements_level::nothrow) {
+      : relocate([](char* self, char&& rhs) noexcept {
         new(self) P(reinterpret_cast<P&&>(rhs));
         reinterpret_cast<P*>(&rhs)->~P();
       }) {}
 
-  void (*relocate)(char*, char&&)
-      noexcept(R == type_requirements_level::nothrow);
+  void (*relocate)(char*, char&&) noexcept;
 };
-template <> struct relocatability_meta<type_requirements_level::none>
-    { template <class _> constexpr explicit relocatability_meta(_) {} };
-template <> struct relocatability_meta<type_requirements_level::trivial>
-    { template <class _> constexpr explicit relocatability_meta(_) {} };
+template <>
+struct relocatability_meta<type_requirements_level::nontrivial> {
+  template <class P>
+  constexpr explicit relocatability_meta(in_place_type_t<P>)
+      : relocate([](char* self, char&& rhs) {
+        new(self) P(reinterpret_cast<P&&>(rhs));
+        reinterpret_cast<P*>(&rhs)->~P();
+      }) {}
 
-template <type_requirements_level R>
-struct destructibility_meta {
+  void (*relocate)(char*, char&&);
+};
+
+template <type_requirements_level> struct destructibility_meta
+    { template <class _> constexpr explicit destructibility_meta(_) {} };
+template <>
+struct destructibility_meta<type_requirements_level::nothrow> {
   template <class P>
   constexpr explicit destructibility_meta(in_place_type_t<P>)
-      : destroy([](char* self) noexcept(R == type_requirements_level::nothrow)
-      { reinterpret_cast<P*>(self)->~P(); }) {}
+      : destroy([](char* self) noexcept
+          { reinterpret_cast<P*>(self)->~P(); }) {}
 
-  void (*destroy)(char*) noexcept(R == type_requirements_level::nothrow);
+  void (*destroy)(char*) noexcept;
 };
-template <> struct destructibility_meta<type_requirements_level::none>
-    { template <class _> constexpr explicit destructibility_meta(_) {} };
-template <> struct destructibility_meta<type_requirements_level::trivial>
-    { template <class _> constexpr explicit destructibility_meta(_) {} };
+template <>
+struct destructibility_meta<type_requirements_level::nontrivial> {
+  template <class P>
+  constexpr explicit destructibility_meta(in_place_type_t<P>)
+      : destroy([](char* self) { reinterpret_cast<P*>(self)->~P(); }) {}
+
+  void (*destroy)(char*);
+};
 
 template <class I, class C>
 struct proxy_meta : copyability_meta<C::copyability>,
@@ -148,14 +154,17 @@ constexpr type_requirements_level get_destructibility() {
   }
   return type_requirements_level::none;
 }
+
+}  // namespace detail
+
 template <class P, class C>
 concept proxiable = sizeof(P) <= C::max_size && alignof(P) <= C::max_alignment
     && detail::get_copyability<P>() >= C::copyability
     && detail::get_relocatability<P>() >= C::relocatability
     && detail::get_destructibility<P>() >= C::destructibility
     && C::destructibility >= type_requirements_level::nontrivial;
-
-}  // namespace detail
+template <class P, class I>
+concept globally_proxiable = proxiable<P, global_proxy_config<I>>;
 
 template <class I, class C = global_proxy_config<I>>
 class proxy {
@@ -192,12 +201,12 @@ class proxy {
   }
   template <class P>
   proxy(P&& ptr) noexcept(is_nothrow_constructible_v<decay_t<P>, P>)
-      requires(detail::proxiable<decay_t<P>, C>)
+      requires(proxiable<decay_t<P>, C>)
       : proxy(in_place_type<decay_t<P>>, forward<P>(ptr)) {}
   template <class P, class... Args>
-  proxy(in_place_type_t<P>, Args&&... args)
+  explicit proxy(in_place_type_t<P>, Args&&... args)
       noexcept(is_nothrow_constructible_v<P, Args...>)
-      requires(detail::proxiable<P, C>) {
+      requires(proxiable<P, C>) {
     new(ptr_) P(forward<Args>(args)...);
     meta_ = &detail::META<I, C, P>;
   }
@@ -224,10 +233,10 @@ class proxy {
       noexcept(is_nothrow_constructible_v<decay_t<P>, P>
           && C::relocatability >= type_requirements_level::nothrow
           && C::destructibility >= type_requirements_level::nothrow)
-      requires(detail::proxiable<decay_t<P>, C>
+      requires(proxiable<decay_t<P>, C>
           && C::destructibility >= type_requirements_level::nontrivial) {
     proxy temp{forward<P>(ptr)};
-    swap(*this, temp);
+    swap(temp);
     return *this;
   }
   ~proxy() noexcept(C::destructibility >= type_requirements_level::nothrow)
@@ -255,7 +264,7 @@ class proxy {
   const type_info& type() const noexcept
       { return meta_ == nullptr ? typeid(void) : meta_->get_type(); }
   void reset() noexcept(C::destructibility >= type_requirements_level::nothrow)
-      requires (C::destructibility >= type_requirements_level::nontrivial)
+      requires(C::destructibility >= type_requirements_level::nontrivial)
       { this->~proxy(); meta_ = nullptr; }
   void swap(proxy& rhs)
       noexcept(C::relocatability >= type_requirements_level::nothrow)
@@ -268,22 +277,22 @@ class proxy {
           memcpy(ptr_, rhs.ptr_, C::max_size);
           memcpy(rhs.ptr_, temp, C::max_size);
         } else {
-          meta_->relocate(temp, *ptr_);
-          rhs.meta_->relocate(ptr_, *rhs.ptr_);
-          meta_->relocate(rhs.ptr_, *temp);
+          meta_->relocate(temp, move(*ptr_));
+          rhs.meta_->relocate(ptr_, move(*rhs.ptr_));
+          meta_->relocate(rhs.ptr_, move(*temp));
         }
       } else {
         if constexpr (C::relocatability == type_requirements_level::trivial) {
           memcpy(rhs.ptr_, ptr_, C::max_size);
         } else {
-          meta_->relocate(rhs.ptr_, *ptr_);
+          meta_->relocate(rhs.ptr_, move(*ptr_));
         }
       }
     } else if (rhs.meta_ != nullptr) {
       if constexpr (C::relocatability == type_requirements_level::trivial) {
         memcpy(ptr_, rhs.ptr_, C::max_size);
       } else {
-        rhs.meta_->relocate(ptr_, *rhs.ptr_);
+        rhs.meta_->relocate(ptr_, move(*rhs.ptr_));
       }
     } else {
       return;
@@ -295,7 +304,7 @@ class proxy {
       noexcept(is_nothrow_constructible_v<P, Args...>
           && C::relocatability >= type_requirements_level::nothrow
           && C::destructibility >= type_requirements_level::nothrow)
-      requires(detail::proxiable<P, C>
+      requires(proxiable<P, C>
           && C::destructibility >= type_requirements_level::nontrivial) {
     reset();
     proxy temp{in_place_type<P>, forward<Args>(args)...};

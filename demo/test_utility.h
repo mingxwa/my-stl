@@ -3,8 +3,8 @@
  * Author: Mingxin Wang (mingxwa@microsoft.com)
  */
 
-#ifndef SRC_TEST_TEST_UTILITY_H_
-#define SRC_TEST_TEST_UTILITY_H_
+#ifndef SRC_DEMO_TEST_UTILITY_H_
+#define SRC_DEMO_TEST_UTILITY_H_
 
 #include <cstdio>
 #include <random>
@@ -12,7 +12,7 @@
 #include <atomic>
 #include <thread>
 
-namespace test {
+namespace demo {
 
 namespace detail {
 
@@ -65,6 +65,6 @@ inline void mock_random_execution(int min_time_ms, int max_time_ms) {
   mock_execution(random_int(min_time_ms, max_time_ms));
 }
 
-}  // namespace test
+}  // namespace demo
 
-#endif  // SRC_TEST_TEST_UTILITY_H_
+#endif  // SRC_DEMO_TEST_UTILITY_H_

@@ -39,21 +39,26 @@ struct basic_proxy_meta<IProgressReceiver> {
 };
 
 template <class P>
-struct erased<IProgressReceiver, P> : erased_base<IProgressReceiver, P> {
-  erased(const basic_proxy_meta<IProgressReceiver>& meta, P ptr)
-      : erased_base<IProgressReceiver, P>(meta, forward<P>(ptr)) {}
+class erased<IProgressReceiver, P> {
+ public:
+  explicit erased(const basic_proxy_meta<IProgressReceiver>& meta, P ptr)
+      : meta_(meta), ptr_(forward<P>(ptr)) {}
   erased(const erased&) = default;
 
   void Initialize(std::size_t arg_0) const requires is_convertible_v<P, char&>
-      { this->meta_.f0(forward<P>(this->ptr_), arg_0); }
+      { meta_.f0(forward<P>(ptr_), arg_0); }
   void UpdateProgress(std::size_t arg_0) const
       requires is_convertible_v<P, char&>
-      { this->meta_.f1(forward<P>(this->ptr_), arg_0); }
+      { meta_.f1(forward<P>(ptr_), arg_0); }
   bool IsCanceled() const noexcept requires is_convertible_v<P, char&>
-      { return this->meta_.f2(forward<P>(this->ptr_)); }
+      { return meta_.f2(forward<P>(ptr_)); }
   void OnException(std::exception_ptr arg_0) const noexcept
       requires is_convertible_v<P, char&>
-      { return this->meta_.f3(forward<P>(this->ptr_), move(arg_0)); }
+      { return meta_.f3(forward<P>(ptr_), move(arg_0)); }
+
+ private:
+  const basic_proxy_meta<IProgressReceiver>& meta_;
+  P ptr_;
 };
 
 }  // namespace std::p0957::detail

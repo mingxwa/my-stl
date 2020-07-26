@@ -14,21 +14,22 @@
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_immutable_map_impl.h"
 
-//namespace std::p0957 {
-//
-//template <>
-//struct global_proxy_config<IImmutableMap<int, std::string>>
-//    : default_proxy_config {
-//  static constexpr type_requirements_level copyability
-//      = type_requirements_level::nontrivial;
-//};
-//
-//}  // namespace std::p0957
+namespace std::p0957 {
+
+template <>
+struct global_proxy_config<IImmutableMap<int, std::string>>
+    : default_proxy_config {
+  static constexpr type_requirements_level copyability
+      = type_requirements_level::nontrivial;
+  static constexpr std::size_t max_size = sizeof(std::optional<std::vector<std::string>>);
+};
+
+}  // namespace std::p0957
 
 void do_something_with_map(std::p0957::proxy<IImmutableMap<int, std::string>> m) {
-  // std::p0957::proxy<IImmutableMap<int, std::string>> p = m;
+  auto p = m;
   try {
-    std::cout << (*p).at(1) << std::endl;
+    std::cout << (*m).at(1) << std::endl;
   } catch (const std::out_of_range& e) {
     std::cout << "No such element: " << e.what() << std::endl;
   }
@@ -40,6 +41,6 @@ int main() {
   std::vector<std::string> var3{"I", "love", "Proxy", "!"};
   do_something_with_map(&var1);
   do_something_with_map(&var2);
-  do_something_with_map(&var3);
+  do_something_with_map(std::optional<std::vector<std::string>>(var3));
   do_something_with_map(std::make_shared<std::map<int, std::string>>());
 }
