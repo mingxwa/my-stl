@@ -201,7 +201,7 @@ class proxy {
   }
   template <class P>
   proxy(P&& ptr) noexcept(is_nothrow_constructible_v<decay_t<P>, P>)
-      requires(proxiable<decay_t<P>, C>)
+      requires(!is_same_v<decay_t<P>, proxy> && proxiable<decay_t<P>, C>)
       : proxy(in_place_type<decay_t<P>>, forward<P>(ptr)) {}
   template <class P, class... Args>
   explicit proxy(in_place_type_t<P>, Args&&... args)
@@ -215,7 +215,7 @@ class proxy {
           && C::destructibility >= type_requirements_level::nothrow)
       requires(C::copyability >= type_requirements_level::nontrivial
           && C::destructibility >= type_requirements_level::nontrivial) {
-    ~proxy();
+    this->~proxy();
     new(this) proxy(rhs);
     return *this;
   }
@@ -224,7 +224,7 @@ class proxy {
           && C::destructibility >= type_requirements_level::nothrow)
       requires(C::relocatability >= type_requirements_level::nontrivial
           && C::destructibility >= type_requirements_level::nontrivial) {
-    ~proxy();
+    this->~proxy();
     new(this) proxy(move(rhs));
     return *this;
   }
@@ -233,7 +233,8 @@ class proxy {
       noexcept(is_nothrow_constructible_v<decay_t<P>, P>
           && C::relocatability >= type_requirements_level::nothrow
           && C::destructibility >= type_requirements_level::nothrow)
-      requires(proxiable<decay_t<P>, C>
+      requires(!is_same_v<decay_t<P>, proxy>
+          && proxiable<decay_t<P>, C>
           && C::destructibility >= type_requirements_level::nontrivial) {
     proxy temp{forward<P>(ptr)};
     swap(temp);
@@ -316,6 +317,71 @@ class proxy {
   const detail::proxy_meta<I, C>* meta_;
   alignas(C::max_alignment) char ptr_[C::max_size];
 };
+
+namespace detail {
+
+template <class T>
+class sbo_ptr {
+ public:
+  template <class... Args>
+  sbo_ptr(Args&&... args) : value_(forward<Args>(args)...) {}
+  sbo_ptr(const sbo_ptr&) noexcept(is_nothrow_copy_constructible_v<T>)
+      = default;
+  sbo_ptr(sbo_ptr&&) noexcept(is_nothrow_move_constructible_v<T>) = default;
+
+  T& operator*() & noexcept { return value_; }
+  const T& operator*() const& noexcept { return value_; }
+  T&& operator*() && noexcept { return move(value_); }
+  const T&& operator*() const&& noexcept { return move(value_); }
+
+ private:
+  T value_;
+};
+
+template <class T>
+class deep_ptr {
+ public:
+  template <class... Args>
+  deep_ptr(Args&&... args) : ptr_(new T(forward<Args>(args)...)) {}
+  deep_ptr(const deep_ptr& rhs) noexcept(is_nothrow_copy_constructible_v<T>)
+      requires(is_copy_constructible_v<T>) : ptr_(new T(*rhs)) {}
+  deep_ptr(deep_ptr&& rhs) noexcept requires(is_move_constructible_v<T>)
+      : ptr_(new T(*move(rhs))) { rhs.ptr_ = nullptr; }
+  ~deep_ptr() noexcept { delete ptr_; }
+
+  T& operator*() & noexcept { return *ptr_; }
+  const T& operator*() const& noexcept { return *ptr_; }
+  T&& operator*() && noexcept { return move(*ptr_); }
+  const T&& operator*() const&& noexcept { return move(*ptr_); }
+
+ private:
+  T* ptr_;
+};
+
+template <class I, class T, class C, class... Args>
+proxy<I, C> make_proxy_impl(Args&&... args) {
+  using P = conditional_t<proxiable<sbo_ptr<T>, C>, sbo_ptr<T>, deep_ptr<T>>;
+  return proxy<I, C>{in_place_type<P>, forward<Args>(args)...};
+}
+
+}  // namespace detail
+
+template <class I, class T, class C = global_proxy_config<I>, class... Args>
+proxy<I, C> make_proxy(Args&&... args) {
+  return detail::make_proxy_impl<I, T, C>(forward<Args>(args)...);
+}
+
+template <class I, class T, class C = global_proxy_config<I>, class U,
+    class... Args>
+proxy<I, C> make_proxy(initializer_list<U> il, Args&&... args) {
+  return make_proxy<I, T, C>(il, forward<Args>(args)...);
+}
+
+template <class I, class T = void, class C = global_proxy_config<I>, class U>
+proxy<I, C> make_proxy(U&& value) {
+  return detail::make_proxy_impl<
+      I, conditional_t<is_void_v<T>, decay_t<U>, T>, C>(forward<U>(value));
+}
 
 }  // namespace std::p0957
 

@@ -131,6 +131,7 @@ void DemoForThreadPoolWithCancellation() {
   pool.executor().execute([ctx]() mutable { MyLibrary(std::move(ctx)); });
   pool.executor().execute([ctx]() mutable {
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
+    puts("Canceling the work...");
     ctx->Cancel();
   });
   ctx->ReportOnConsole();

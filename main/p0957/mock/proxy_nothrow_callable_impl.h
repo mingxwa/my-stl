@@ -8,16 +8,16 @@
 
 #include <utility>
 
-template <class> struct NothrowCallable;
+template <class> struct INothrowCallable;
 template <class R, class... Args>
-struct NothrowCallable<R(Args...)> {
+struct INothrowCallable<R(Args...)> {
   virtual R operator()(Args...) noexcept;
 };
 
 namespace std::p0957::detail {
 
 template <class R, class... Args>
-struct basic_proxy_meta<NothrowCallable<R(Args...)>> {
+struct basic_proxy_meta<INothrowCallable<R(Args...)>> {
   template <class P>
   constexpr explicit basic_proxy_meta(in_place_type_t<P>) noexcept
       : f0([](char& p, Args&&... args) noexcept -> R
@@ -28,9 +28,9 @@ struct basic_proxy_meta<NothrowCallable<R(Args...)>> {
 };
 
 template <class P, class R, class... Args>
-class erased<NothrowCallable<R(Args...)>, P> {
+class erased<INothrowCallable<R(Args...)>, P> {
  public:
-  explicit erased(const basic_proxy_meta<NothrowCallable<R(Args...)>>& meta,
+  explicit erased(const basic_proxy_meta<INothrowCallable<R(Args...)>>& meta,
       P ptr) : meta_(meta), ptr_(forward<P>(ptr)) {}
   erased(const erased&) = default;
 
@@ -38,7 +38,7 @@ class erased<NothrowCallable<R(Args...)>, P> {
       { return meta_.f0(forward<P>(ptr_), forward<Args>(args)...); }
 
  private:
-  const basic_proxy_meta<NothrowCallable<R(Args...)>>& meta_;
+  const basic_proxy_meta<INothrowCallable<R(Args...)>>& meta_;
   P ptr_;
 };
 

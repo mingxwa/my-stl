@@ -49,11 +49,11 @@ class fifo_source {
 };
 
 int main() {
-  std::unique_ptr<fifo_source<int>> s1 = std::make_unique<fifo_source<int>>();
+  fifo_source<int> s1;
   for (int i = 0; i < 10; ++i) {
-    s1->emplace(i);
+    s1.emplace(i);
   }
-  std::p0957::proxy<IDataStream<double>> p(std::move(s1));
+  auto p = std::p0957::make_proxy_from_value<IDataStream<double>>(std::move(s1));
   while (p.value().has_next()) {
     printf("%f\n", (*p).next());
   }

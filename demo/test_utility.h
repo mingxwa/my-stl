@@ -35,6 +35,8 @@ class time_recorder {
     printf("Time recorder for event [%s] has been established.\n", name_);
   }
 
+  ~time_recorder() { record(); }
+
   void record() const {
     std::chrono::duration<int, std::milli> result = std::chrono::duration_cast<
         std::chrono::milliseconds>(std::chrono::system_clock::now() - when_);
