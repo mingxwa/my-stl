@@ -374,7 +374,12 @@ class scheduled_thread_pool {
 
   struct job_comparator {
     bool operator()(const shared_ptr<job_context>& a,
-        const shared_ptr<job_context>& b) const { return a->when_ < b->when_; }
+        const shared_ptr<job_context>& b) const {
+      if (a->when_ != b->when_) {
+        return a->when_ < b->when_;
+      }
+      return a < b;
+    }
   };
 
   struct worker_comparator {
