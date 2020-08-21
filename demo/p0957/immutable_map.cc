@@ -21,12 +21,14 @@ struct global_proxy_config<IImmutableMap<int, std::string>>
     : default_proxy_config {
   static constexpr type_requirements_level copyability
       = type_requirements_level::nontrivial;
-  static constexpr std::size_t max_size = sizeof(std::optional<std::vector<std::string>>);
+  static constexpr std::size_t max_size
+      = sizeof(std::optional<std::vector<std::string>>);
 };
 
 }  // namespace std::p0957
 
-void do_something_with_map(std::p0957::proxy<IImmutableMap<int, std::string>> m) {
+void do_something_with_map(
+    std::p0957::proxy<IImmutableMap<int, std::string>> m) {
   auto p = m;
   try {
     std::cout << (*m).at(1) << std::endl;

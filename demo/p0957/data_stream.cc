@@ -53,7 +53,7 @@ int main() {
   for (int i = 0; i < 10; ++i) {
     s1.emplace(i);
   }
-  auto p = std::p0957::make_proxy_from_value<IDataStream<double>>(std::move(s1));
+  auto p = std::p0957::make_proxy<IDataStream<double>>(std::move(s1));
   while (p.value().has_next()) {
     printf("%f\n", (*p).next());
   }

@@ -11,12 +11,12 @@
 #include "../../main/p0957/proxy.h"
 #include "../../main/p0957/mock/proxy_progress_receiver_impl.h"
 
-#include "../../main/experimental/executors.h"
+#include "../../main/experimental/static_thread_pool.h"
 
 void MyLibrary(std::p0957::proxy<IProgressReceiver> p) {
   constexpr std::size_t kTotal = 500;
   try {
-    std::this_thread::sleep_for(std::chrono::seconds(2));  // Mock initialization
+    std::this_thread::sleep_for(std::chrono::seconds(2));  // Mock init
     (*p).Initialize(kTotal);
     for (std::size_t i = 1u; i <= kTotal; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Mock job
@@ -71,7 +71,8 @@ struct DemoContext {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         progress = GetProgress();
         double percentage = 100. * progress / total;
-        printf("Processed %zu out of %zu, %.1f%%\n", progress, total, percentage);
+        printf("Processed %zu out of %zu, %.1f%%\n",
+            progress, total, percentage);
       } while (progress != total);
       puts("Done!");
     } catch (const std::exception& e) {
@@ -120,7 +121,7 @@ void DemoForThreadPool() {
   static std::experimental::static_thread_pool<> pool(2u);
 
   std::shared_ptr<DemoContext> ctx = std::make_shared<DemoContext>();
-  pool.executor().execute([ctx]() mutable { MyLibrary(std::move(ctx)); });
+  pool.submit([ctx]() mutable { MyLibrary(std::move(ctx)); });
   ctx->ReportOnConsole();
 }
 
@@ -128,8 +129,8 @@ void DemoForThreadPoolWithCancellation() {
   static std::experimental::static_thread_pool<> pool(2u);
 
   std::shared_ptr<DemoContext> ctx = std::make_shared<DemoContext>();
-  pool.executor().execute([ctx]() mutable { MyLibrary(std::move(ctx)); });
-  pool.executor().execute([ctx]() mutable {
+  pool.submit([ctx]() mutable { MyLibrary(std::move(ctx)); });
+  pool.submit([ctx]() mutable {
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
     puts("Canceling the work...");
     ctx->Cancel();
