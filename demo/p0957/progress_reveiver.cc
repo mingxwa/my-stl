@@ -4,29 +4,41 @@
  */
 
 #include <memory>
-#include <optional>
 #include <thread>
 #include <mutex>
 
 #include "../../main/p0957/proxy.h"
-#include "../../main/p0957/mock/proxy_progress_receiver_impl.h"
 
-#include "../../main/experimental/static_thread_pool.h"
+namespace expr {
 
-void MyLibrary(std::p0957::proxy<IProgressReceiver> p) {
+struct Initialize : std::facade_expr<
+    void(std::size_t), [](auto& self, std::size_t total) { self.Initialize(total); }> {};
+struct UpdateProgress : std::facade_expr<
+    void(std::size_t), [](auto& self, std::size_t progress) { self.UpdateProgress(progress); }> {};
+struct IsCanceled : std::facade_expr<
+    bool(), [](auto& self) { return self.IsCanceled(); }> {};
+struct OnException : std::facade_expr<
+    void(std::exception_ptr), [](auto& self, std::exception_ptr&& e) { self.OnException(std::move(e)); }> {};
+
+}  // namespace expr
+
+struct FProgressReceiver : std::facade<
+    expr::Initialize, expr::UpdateProgress, expr::IsCanceled, expr::OnException> {};
+
+void MyLibrary(std::proxy<FProgressReceiver> p) {
   constexpr std::size_t kTotal = 500;
   try {
     std::this_thread::sleep_for(std::chrono::seconds(2));  // Mock init
-    (*p).Initialize(kTotal);
+    p.invoke<expr::Initialize>(kTotal);
     for (std::size_t i = 1u; i <= kTotal; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Mock job
-      if ((*p).IsCanceled()) {
+      if (p.invoke<expr::IsCanceled>()) {
         throw std::runtime_error("Operation was canceled by peer");
       }
-      (*p).UpdateProgress(i);
+      p.invoke<expr::UpdateProgress>(i);
     }
   } catch (...) {
-    (*p).OnException(std::current_exception());
+    p.invoke<expr::OnException>(std::current_exception());
   }
 }
 
@@ -110,34 +122,15 @@ struct DemoContext {
   std::exception_ptr ex_;
 };
 
-void DemoForThread() {
-  DemoContext ctx;
-  std::thread t{MyLibrary, &ctx};
-  ctx.ReportOnConsole();
-  t.join();
-}
-
-void DemoForThreadPool() {
-  static std::experimental::static_thread_pool<> pool(2u);
-
-  std::shared_ptr<DemoContext> ctx = std::make_shared<DemoContext>();
-  pool.submit([ctx]() mutable { MyLibrary(std::move(ctx)); });
-  ctx->ReportOnConsole();
-}
-
-void DemoForThreadPoolWithCancellation() {
-  static std::experimental::static_thread_pool<> pool(2u);
-
-  std::shared_ptr<DemoContext> ctx = std::make_shared<DemoContext>();
-  pool.submit([ctx]() mutable { MyLibrary(std::move(ctx)); });
-  pool.submit([ctx]() mutable {
+int main() {
+  auto ctx = std::make_shared<DemoContext>();
+  std::thread t1{MyLibrary, ctx};
+  std::thread t2([ctx] {
     std::this_thread::sleep_for(std::chrono::milliseconds(5000));
     puts("Canceling the work...");
     ctx->Cancel();
   });
   ctx->ReportOnConsole();
-}
-
-int main() {
-  DemoForThreadPoolWithCancellation();
+  t2.join();
+  t1.join();
 }
