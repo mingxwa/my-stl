@@ -18,18 +18,18 @@ namespace std {
 
 enum class constraint_level { none, nontrivial, nothrow, trivial };
 
-template <class T, auto F> struct facade_expr;
+template <class T, auto F> struct dispatch;
 template <class R, class... Args, auto F>
-struct facade_expr<R(Args...), F> {
+struct dispatch<R(Args...), F> {
   using return_type = R;
   using argument_types = tuple<Args...>;
   static constexpr auto invoker = F;
-  facade_expr() = delete;
+  dispatch() = delete;
 };
 
-template <class... Es>
+template <class... Ds>
 struct facade {
-  using expressions = tuple<Es...>;
+  using dispatches = tuple<Ds...>;
   static constexpr size_t maximum_size = sizeof(void*) * 2u;
   static constexpr size_t maximum_alignment = alignof(void*);
   static constexpr constraint_level minimum_copyability =
@@ -86,35 +86,38 @@ template <class P> requires(requires(P ptr) { { *ptr }; })
 struct pointer_traits<P> : applicable_traits
     { using value_type = decltype(*declval<P&>()); };
 
+template <class T, class... Us> struct contains_traits : inapplicable_traits {};
 template <class T, class... Us>
-struct index_traits : integral_constant<size_t, 0u> {};
-template <class T, class U, class... Us> requires(!is_same_v<T, U>)
-struct index_traits<T, U, Us...>
-    : integral_constant<size_t, index_traits<T, Us...>::value + 1u> {};
+struct contains_traits<T, T, Us...> : applicable_traits {};
+template <class T, class U, class... Us>
+struct contains_traits<T, U, Us...> : contains_traits<T, Us...> {};
 
-template <class E, class Args>
-struct facade_expr_traits_impl : inapplicable_traits {};
-template <class E, class... Args>
-struct facade_expr_traits_impl<E, tuple<Args...>> : applicable_traits {
-  using function_type = typename E::return_type (*)(char*, Args...);
+template <class... U> struct default_traits { using type = void; };
+template <class T> struct default_traits<T> { using type = T; };
+
+template <class D, class Args>
+struct dispatch_traits_impl : inapplicable_traits {};
+template <class D, class... Args>
+struct dispatch_traits_impl<D, tuple<Args...>> : applicable_traits {
+  using dispatcher_type = typename D::return_type (*)(char*, Args...);
 
   template <class T>
   static constexpr bool applicable_operand = requires(T operand, Args... args)
-      { { E::invoker(forward<T>(operand), forward<Args>(args)...) }; };
+      { { D::invoker(forward<T>(operand), forward<Args>(args)...) }; };
   template <class P>
-  static typename E::return_type invoke(char* p, Args... args)
-      { return E::invoker(**reinterpret_cast<P*>(p), forward<Args>(args)...); }
+  static typename D::return_type dispatcher(char* p, Args... args)
+      { return D::invoker(**reinterpret_cast<P*>(p), forward<Args>(args)...); }
 };
 
-template <class E>
-struct facade_expr_traits : inapplicable_traits {};
-template <class E> requires(requires {
-      typename E::return_type;
-      typename E::argument_types;
-      { E::invoker };
+template <class D>
+struct dispatch_traits : inapplicable_traits {};
+template <class D> requires(requires {
+      typename D::return_type;
+      typename D::argument_types;
+      { D::invoker };
     })
-struct facade_expr_traits<E>
-    : facade_expr_traits_impl<E, typename E::argument_types> {};
+struct dispatch_traits<D>
+    : dispatch_traits_impl<D, typename D::argument_types> {};
 
 struct type_info_meta {
   template <class P>
@@ -122,13 +125,13 @@ struct type_info_meta {
 
   const type_info& type;
 };
-template <class... Es>
-struct facade_expr_meta {
+template <class D>
+struct dispatch_meta {
   template <class P>
-  constexpr explicit facade_expr_meta(in_place_type_t<P>)
-      : expr_functions(facade_expr_traits<Es>::template invoke<P>...) {}
+  constexpr explicit dispatch_meta(in_place_type_t<P>)
+      : dispatcher(dispatch_traits<D>::template dispatcher<P>) {}
 
-  tuple<typename facade_expr_traits<Es>::function_type...> expr_functions;
+  typename dispatch_traits<D>::dispatcher_type dispatcher;
 };
 struct copy_meta {
   template <class P>
@@ -189,7 +192,7 @@ template <class T, class... Ts, class U>
 struct flattening_traits_impl<tuple<T, Ts...>, U>
     : flattening_traits_impl<tuple<Ts...>, U> {};
 template <class T, class... Ts, class... Us>
-    requires(index_traits<T, Us...>::value == sizeof...(Us))
+    requires(!contains_traits<T, Us...>::applicable)
 struct flattening_traits_impl<tuple<T, Ts...>, tuple<Us...>>
     : flattening_traits_impl<tuple<Ts...>, tuple<Us..., T>> {};
 template <class T> struct flattening_traits { using type = tuple<T>; };
@@ -199,25 +202,22 @@ struct flattening_traits<tuple<T, Ts...>> : flattening_traits_impl<
     typename flattening_traits<T>::type,
     typename flattening_traits<tuple<Ts...>>::type> {};
 
-template <class F, class Es> struct basic_facade_traits_impl;
-template <class F, class... Es>
-struct basic_facade_traits_impl<F, tuple<Es...>> : applicable_traits {
+template <class F, class Ds> struct basic_facade_traits_impl;
+template <class F, class... Ds>
+struct basic_facade_traits_impl<F, tuple<Ds...>> : applicable_traits {
   using meta_type = typename facade_meta_traits<
       conditional_meta_tag<F::minimum_copyability, copy_meta>,
       conditional_meta_tag<F::minimum_relocatability, relocation_meta>,
       conditional_meta_tag<F::minimum_destructibility, destruction_meta>,
       type_info_meta>::type;
-  using default_expr = conditional_t<
-      sizeof...(Es) == 1u, tuple_element_t<0u, tuple<Es...>>, void>;
+  using default_dispatch = typename default_traits<Ds...>::type;
 
-  template <class E> static constexpr size_t expr_index =
-      index_traits<E, Es...>::value;
-  template <class E> static constexpr bool has_expr =
-      expr_index<E> < sizeof...(Es);
+  template <class D>
+  static constexpr bool has_dispatch = contains_traits<D, Ds...>::applicable;
 };
 template <class F> struct basic_facade_traits : inapplicable_traits {};
 template <class F> requires(requires {
-      typename F::expressions;
+      typename F::dispatches;
       typename integral_constant<size_t, F::maximum_size>;
       typename integral_constant<size_t, F::maximum_alignment>;
       typename integral_constant<constraint_level, F::minimum_copyability>;
@@ -225,15 +225,14 @@ template <class F> requires(requires {
       typename integral_constant<constraint_level, F::minimum_destructibility>;
     })
 struct basic_facade_traits<F> : basic_facade_traits_impl<
-    F, typename flattening_traits<typename F::expressions>::type> {};
+    F, typename flattening_traits<typename F::dispatches>::type> {};
 
-template <class F, class Es>
+template <class F, class Ds>
 struct facade_traits_impl : inapplicable_traits {};
-template <class F, class... Es>
-    requires(facade_expr_traits<Es>::applicable && ...)
-struct facade_traits_impl<F, tuple<Es...>> : applicable_traits {
+template <class F, class... Ds> requires(dispatch_traits<Ds>::applicable && ...)
+struct facade_traits_impl<F, tuple<Ds...>> : applicable_traits {
   using meta_type = facade_meta<
-      typename basic_facade_traits<F>::meta_type, facade_expr_meta<Es...>>;
+      typename basic_facade_traits<F>::meta_type, dispatch_meta<Ds>...>;
 
   template <class P>
   static constexpr bool applicable_pointer =
@@ -241,12 +240,12 @@ struct facade_traits_impl<F, tuple<Es...>> : applicable_traits {
       has_copyability<P>(F::minimum_copyability) &&
       has_relocatability<P>(F::minimum_relocatability) &&
       has_destructibility<P>(F::minimum_destructibility) &&
-      (facade_expr_traits<Es>::template applicable_operand<
+      (dispatch_traits<Ds>::template applicable_operand<
           typename pointer_traits<P>::value_type> && ...);
   template <class P> static constexpr meta_type meta{in_place_type<P>};
 };
 template <class F> struct facade_traits : facade_traits_impl<
-    F, typename flattening_traits<typename F::expressions>::type> {};
+    F, typename flattening_traits<typename F::dispatches>::type> {};
 
 template <class T, class U> struct dependent_traits { using type = T; };
 template <class T, class U>
@@ -463,14 +462,13 @@ class proxy {
     }
     return *reinterpret_cast<const P*>(ptr_);
   }
-  template <class E = typename BasicTraits::default_expr, class... Args>
+  template <class D = typename BasicTraits::default_dispatch, class... Args>
   decltype(auto) invoke(Args&&... args)
-      requires(detail::dependent_t<Traits, E>::applicable &&
-          BasicTraits::template has_expr<E> &&
-          is_convertible_v<tuple<Args...>, typename E::argument_types>) {
-    return get<BasicTraits::template expr_index<E>>(
-        static_cast<const typename Traits::meta_type*>(meta_)->expr_functions)(
-        ptr_, forward<Args>(args)...);
+      requires(detail::dependent_t<Traits, D>::applicable &&
+          BasicTraits::template has_dispatch<D> &&
+          is_convertible_v<tuple<Args...>, typename D::argument_types>) {
+    return static_cast<const typename Traits::meta_type*>(meta_)
+        ->template dispatch_meta<D>::dispatcher(ptr_, forward<Args>(args)...);
   }
 
  private:

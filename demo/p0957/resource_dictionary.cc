@@ -13,14 +13,10 @@
 
 #include "../../main/p0957/proxy.h"
 
-namespace expr {
-
-struct at : std::facade_expr<
+struct at : std::dispatch<
     std::string(int), [](auto& self, int key) { return self.at(key); }> {};
 
-}  // namespace expr
-
-struct FResourceDictionary : std::facade<expr::at> {
+struct FResourceDictionary : std::facade<at> {
   static constexpr std::size_t maximum_size =
       sizeof(std::optional<std::vector<std::string>>);
   static constexpr std::constraint_level minimum_copyability =

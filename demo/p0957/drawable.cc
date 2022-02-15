@@ -13,16 +13,12 @@
 
 #include "../../main/p0957/proxy.h"
 
-namespace expr {
-
-struct Draw : std::facade_expr<
+struct Draw : std::dispatch<
     void(), [](const auto& self) { self.Draw(); }> {};
-struct Area : std::facade_expr<
+struct Area : std::dispatch<
     double(), [](const auto& self) { return self.Area(); }> {};
 
-}  // namespace expr
-
-struct FDrawable : std::facade<expr::Draw, expr::Area> {};
+struct FDrawable : std::facade<Draw, Area> {};
 
 class Rectangle {
  public:
@@ -59,8 +55,8 @@ class Point {
 
 void DoSomethingWithDrawable(std::proxy<FDrawable> p) {
   printf("The drawable is: ");
-  p.invoke<expr::Draw>();
-  printf(", area = %f\n", p.invoke<expr::Area>());
+  p.invoke<Draw>();
+  printf(", area = %f\n", p.invoke<Area>());
 }
 
 std::vector<std::string> ParseCommand(const std::string& s) {

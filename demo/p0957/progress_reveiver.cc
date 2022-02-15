@@ -9,36 +9,32 @@
 
 #include "../../main/p0957/proxy.h"
 
-namespace expr {
-
-struct Initialize : std::facade_expr<
+struct Initialize : std::dispatch<
     void(std::size_t), [](auto& self, std::size_t total) { self.Initialize(total); }> {};
-struct UpdateProgress : std::facade_expr<
+struct UpdateProgress : std::dispatch<
     void(std::size_t), [](auto& self, std::size_t progress) { self.UpdateProgress(progress); }> {};
-struct IsCanceled : std::facade_expr<
+struct IsCanceled : std::dispatch<
     bool(), [](auto& self) { return self.IsCanceled(); }> {};
-struct OnException : std::facade_expr<
+struct OnException : std::dispatch<
     void(std::exception_ptr), [](auto& self, std::exception_ptr&& e) { self.OnException(std::move(e)); }> {};
 
-}  // namespace expr
-
 struct FProgressReceiver : std::facade<
-    expr::Initialize, expr::UpdateProgress, expr::IsCanceled, expr::OnException> {};
+    Initialize, UpdateProgress, IsCanceled, OnException> {};
 
 void MyLibrary(std::proxy<FProgressReceiver> p) {
   constexpr std::size_t kTotal = 500;
   try {
     std::this_thread::sleep_for(std::chrono::seconds(2));  // Mock init
-    p.invoke<expr::Initialize>(kTotal);
+    p.invoke<Initialize>(kTotal);
     for (std::size_t i = 1u; i <= kTotal; ++i) {
       std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Mock job
-      if (p.invoke<expr::IsCanceled>()) {
+      if (p.invoke<IsCanceled>()) {
         throw std::runtime_error("Operation was canceled by peer");
       }
-      p.invoke<expr::UpdateProgress>(i);
+      p.invoke<UpdateProgress>(i);
     }
   } catch (...) {
-    p.invoke<expr::OnException>(std::current_exception());
+    p.invoke<OnException>(std::current_exception());
   }
 }
 

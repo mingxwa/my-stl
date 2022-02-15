@@ -11,24 +11,24 @@
 
 #include "../../main/p0957/proxy.h"
 
-template <class T> struct InvokeExpr;
+template <class T> struct Call;
 template <class R, class... Args>
-struct InvokeExpr<R(Args...)> : std::facade_expr<
+struct Call<R(Args...)> : std::dispatch<
     R(Args&&...), [](auto& self, Args&&... args)
         { return self(std::forward<Args>(args)...); }> {};
 template <class T>
-struct FunctionFacade : std::facade<InvokeExpr<T>> {};
+struct FCallable : std::facade<Call<T>> {};
 
 template <class T>
-struct ForEachExpr : std::facade_expr<
-    void(std::proxy<FunctionFacade<void(T&)>>),
-    [](auto& self, std::proxy<FunctionFacade<void(T&)>>&& func)
+struct ForEach : std::dispatch<
+    void(std::proxy<FCallable<void(T&)>>),
+    [](auto& self, std::proxy<FCallable<void(T&)>>&& func)
         { std::ranges::for_each(self, [&func](T& value)
             { func.invoke(value); }); }> {};
 template <class T>
-struct IterableFacade : std::facade<ForEachExpr<T>> {};
+struct FIterable : std::facade<ForEach<T>> {};
 
-void MyPrintLibrary(std::proxy<IterableFacade<int>> p) {
+void MyPrintLibrary(std::proxy<FIterable<int>> p) {
   auto f = [](double value) { printf("%f\n", value); };
   p.invoke(&f);
   puts("");
