@@ -510,22 +510,23 @@ class deep_ptr {
   T* ptr_;
 };
 
+template <class F, class T, class... Args>
+proxy<F> make_proxy_impl(Args&&... args) {
+  return proxy<F>{in_place_type<conditional_t<proxiable<sbo_ptr<T>, F>,
+      sbo_ptr<T>, deep_ptr<T>>>, forward<Args>(args)...};
+}
+
 }  // namespace detail
 
 template <class F, class T, class... Args>
-proxy<F> make_proxy(Args&&... args) {
-  if constexpr (proxiable<detail::sbo_ptr<T>, F>) {
-    return proxy<F>{in_place_type<detail::sbo_ptr<T>>, forward<Args>(args)...};
-  } else {
-    return proxy<F>{in_place_type<detail::deep_ptr<T>>, forward<Args>(args)...};
-  }
-}
+proxy<F> make_proxy(Args&&... args)
+    { return detail::make_proxy_impl<F, T>(forward<Args>(args)...); }
 template <class F, class T, class U, class... Args>
 proxy<F> make_proxy(initializer_list<U> il, Args&&... args)
-    { return make_proxy<F, T>(il, forward<Args>(args)...); }
+    { return detail::make_proxy_impl<F, T>(il, forward<Args>(args)...); }
 template <class F, class T>
 proxy<F> make_proxy(T&& value)
-    { return make_proxy<F, decay_t<T>>(forward<T>(value)); }
+    { return detail::make_proxy_impl<F, decay_t<T>>(forward<T>(value)); }
 
 template <class F>
 void swap(std::proxy<F>& a, std::proxy<F>& b)
