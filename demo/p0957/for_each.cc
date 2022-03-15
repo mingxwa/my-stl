@@ -13,18 +13,21 @@
 
 template <class T> struct Call;
 template <class R, class... Args>
-struct Call<R(Args...)> : std::dispatch<
-    R(Args&&...), [](auto& self, Args&&... args)
-        { return self(std::forward<Args>(args)...); }> {};
+struct Call<R(Args...)> : std::dispatch<R(Args&&...)> {
+  template <class T>
+  auto operator()(T& self, Args&&... args)
+      { return self(std::forward<Args>(args)...); }
+};
 template <class T>
 struct FCallable : std::facade<Call<T>> {};
 
 template <class T>
-struct ForEach : std::dispatch<
-    void(std::proxy<FCallable<void(T&)>>),
-    [](auto& self, std::proxy<FCallable<void(T&)>>&& func)
-        { std::ranges::for_each(self, [&func](T& value)
-            { func.invoke(value); }); }> {};
+struct ForEach : std::dispatch<void(std::proxy<FCallable<void(T&)>>)> {
+  template <class U>
+  void operator()(U& self, std::proxy<FCallable<void(T&)>>&& func) {
+    std::ranges::for_each(self, [&func](T& value) { func.invoke(value); });
+  }
+};
 template <class T>
 struct FIterable : std::facade<ForEach<T>> {};
 

@@ -13,10 +13,14 @@
 
 #include "../../main/p0957/proxy.h"
 
-struct Draw : std::dispatch<
-    void(), [](const auto& self) { self.Draw(); }> {};
-struct Area : std::dispatch<
-    double(), [](const auto& self) { return self.Area(); }> {};
+struct Draw : std::dispatch<void()> {
+  template <class T>
+  void operator()(const T& self) { self.Draw(); }
+};
+struct Area : std::dispatch<double()> {
+  template <class T>
+  double operator()(const T& self) { return self.Area(); }
+};
 
 struct FDrawable : std::facade<Draw, Area> {};
 

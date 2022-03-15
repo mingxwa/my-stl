@@ -18,13 +18,11 @@ namespace std {
 
 enum class constraint_level { none, nontrivial, nothrow, trivial };
 
-template <class T, auto F> struct dispatch;
-template <class R, class... Args, auto F>
-struct dispatch<R(Args...), F> {
+template <class T> struct dispatch;
+template <class R, class... Args>
+struct dispatch<R(Args...)> {
   using return_type = R;
   using argument_types = tuple<Args...>;
-  static constexpr auto invoker = F;
-  dispatch() = delete;
 };
 
 template <class... Ds>
@@ -41,7 +39,7 @@ struct facade {
   facade() = delete;
 };
 
-namespace detail {
+namespace details {
 
 struct applicable_traits { static constexpr bool applicable = true; };
 struct inapplicable_traits { static constexpr bool applicable = false; };
@@ -103,18 +101,17 @@ struct dispatch_traits_impl<D, tuple<Args...>> : applicable_traits {
 
   template <class T>
   static constexpr bool applicable_operand = requires(T operand, Args... args)
-      { { D::invoker(forward<T>(operand), forward<Args>(args)...) }; };
+      { { D{}(forward<T>(operand), forward<Args>(args)...) }; };
   template <class P>
   static typename D::return_type dispatcher(char* p, Args... args)
-      { return D::invoker(**reinterpret_cast<P*>(p), forward<Args>(args)...); }
+      { return D{}(**reinterpret_cast<P*>(p), forward<Args>(args)...); }
 };
-
 template <class D>
 struct dispatch_traits : inapplicable_traits {};
 template <class D> requires(requires {
       typename D::return_type;
       typename D::argument_types;
-      { D::invoker };
+      { D{} };
     })
 struct dispatch_traits<D>
     : dispatch_traits_impl<D, typename D::argument_types> {};
@@ -251,7 +248,7 @@ template <class T, class U> struct dependent_traits { using type = T; };
 template <class T, class U>
 using dependent_t = typename dependent_traits<T, U>::type;
 
-}  // namespace detail
+}  // namespace details
 
 class bad_proxy_cast : public bad_cast {
  public:
@@ -259,15 +256,15 @@ class bad_proxy_cast : public bad_cast {
 };
 
 template <class P, class F>
-concept proxiable = detail::pointer_traits<P>::applicable &&
-    detail::basic_facade_traits<F>::applicable &&
-    detail::facade_traits<F>::applicable &&
-    detail::facade_traits<F>::template applicable_pointer<P>;
+concept proxiable = details::pointer_traits<P>::applicable &&
+    details::basic_facade_traits<F>::applicable &&
+    details::facade_traits<F>::applicable &&
+    details::facade_traits<F>::template applicable_pointer<P>;
 
-template <class F> requires(detail::basic_facade_traits<F>::applicable)
+template <class F> requires(details::basic_facade_traits<F>::applicable)
 class proxy {
-  using BasicTraits = detail::basic_facade_traits<F>;
-  using Traits = detail::facade_traits<F>;
+  using BasicTraits = details::basic_facade_traits<F>;
+  using Traits = details::facade_traits<F>;
 
   template <class P, class... Args>
   static constexpr bool HasNothrowPolyConstructor = conditional_t<
@@ -464,7 +461,7 @@ class proxy {
   }
   template <class D = typename BasicTraits::default_dispatch, class... Args>
   decltype(auto) invoke(Args&&... args)
-      requires(detail::dependent_t<Traits, D>::applicable &&
+      requires(details::dependent_t<Traits, D>::applicable &&
           BasicTraits::template has_dispatch<D> &&
           is_convertible_v<tuple<Args...>, typename D::argument_types>) {
     return static_cast<const typename Traits::meta_type*>(meta_)
@@ -476,7 +473,7 @@ class proxy {
   alignas(F::maximum_alignment) char ptr_[F::maximum_size];
 };
 
-namespace detail {
+namespace details {
 
 template <class T>
 class sbo_ptr {
@@ -516,23 +513,20 @@ proxy<F> make_proxy_impl(Args&&... args) {
       sbo_ptr<T>, deep_ptr<T>>>, forward<Args>(args)...};
 }
 
-}  // namespace detail
+}  // namespace details
 
 template <class F, class T, class... Args>
 proxy<F> make_proxy(Args&&... args)
-    { return detail::make_proxy_impl<F, T>(forward<Args>(args)...); }
+    { return details::make_proxy_impl<F, T>(forward<Args>(args)...); }
 template <class F, class T, class U, class... Args>
 proxy<F> make_proxy(initializer_list<U> il, Args&&... args)
-    { return detail::make_proxy_impl<F, T>(il, forward<Args>(args)...); }
+    { return details::make_proxy_impl<F, T>(il, forward<Args>(args)...); }
 template <class F, class T>
 proxy<F> make_proxy(T&& value)
-    { return detail::make_proxy_impl<F, decay_t<T>>(forward<T>(value)); }
+    { return details::make_proxy_impl<F, decay_t<T>>(forward<T>(value)); }
 
 template <class F>
-void swap(std::proxy<F>& a, std::proxy<F>& b)
-    noexcept(F::minimum_relocatability >= constraint_level::nothrow)
-    requires(F::minimum_relocatability >= constraint_level::nontrivial)
-    { a.swap(b); }
+void swap(proxy<F>& a, proxy<F>& b) noexcept(noexcept(a.swap(b))) { a.swap(b); }
 
 }  // namespace std
 

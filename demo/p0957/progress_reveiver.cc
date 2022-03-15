@@ -9,15 +9,24 @@
 
 #include "../../main/p0957/proxy.h"
 
-struct Initialize : std::dispatch<
-    void(std::size_t), [](auto& self, std::size_t total) { self.Initialize(total); }> {};
-struct UpdateProgress : std::dispatch<
-    void(std::size_t), [](auto& self, std::size_t progress) { self.UpdateProgress(progress); }> {};
-struct IsCanceled : std::dispatch<
-    bool(), [](auto& self) { return self.IsCanceled(); }> {};
-struct OnException : std::dispatch<
-    void(std::exception_ptr), [](auto& self, std::exception_ptr&& e) { self.OnException(std::move(e)); }> {};
-
+struct Initialize : std::dispatch<void(std::size_t)> {
+  template <class T>
+  void operator()(T& self, std::size_t total) { self.Initialize(total); }
+};
+struct UpdateProgress : std::dispatch<void(std::size_t)> {
+  template <class T>
+  void operator()(T& self, std::size_t progress)
+      { self.UpdateProgress(progress); }
+};
+struct IsCanceled : std::dispatch<bool()> {
+  template <class T>
+  bool operator()(T& self) { return self.IsCanceled(); }
+};
+struct OnException : std::dispatch<void(std::exception_ptr)> {
+  template <class T>
+  void operator()(T& self, std::exception_ptr&& e)
+      { self.OnException(std::move(e)); }
+};
 struct FProgressReceiver : std::facade<
     Initialize, UpdateProgress, IsCanceled, OnException> {};
 

@@ -13,8 +13,10 @@
 
 #include "../../main/p0957/proxy.h"
 
-struct at : std::dispatch<
-    std::string(int), [](auto& self, int key) { return self.at(key); }> {};
+struct at : std::dispatch<std::string(int)> {
+  template <class T>
+  auto operator()(T& self, int key) { return self.at(key); }
+};
 
 struct FResourceDictionary : std::facade<at> {
   static constexpr std::size_t maximum_size =
