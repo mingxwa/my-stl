@@ -1,9 +1,6 @@
-![avatar](https://repository-images.githubusercontent.com/150747489/96be8380-91ca-11e9-8997-b256113e3c25)
+# Home page of my proposed C++ standard library implementations
 
----
-
-This is the repository of the implementation for the ISO C++ proposals I
-have submitted.
+🔥 [P0957](Proxy: A Polymorphic Programming Library): Proxy: A Polymorphic Programming Library
 
 The organization structure of this repository is as follows:
 

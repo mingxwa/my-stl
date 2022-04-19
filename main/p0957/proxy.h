@@ -10,7 +10,6 @@
 #include <initializer_list>
 #include <type_traits>
 #include <utility>
-#include <typeinfo>
 #include <tuple>
 #include <concepts>
 
@@ -27,7 +26,8 @@ struct dispatch<R(Args...)> {
 
 template <class... Ds>
 struct facade {
-  using dispatches = tuple<Ds...>;
+  using dispatch_types = tuple<Ds...>;
+  using reflection_type = void;
   static constexpr size_t maximum_size = sizeof(void*) * 2u;
   static constexpr size_t maximum_alignment = alignof(void*);
   static constexpr constraint_level minimum_copyability =
@@ -45,7 +45,7 @@ struct applicable_traits { static constexpr bool applicable = true; };
 struct inapplicable_traits { static constexpr bool applicable = false; };
 
 template <class T>
-constexpr bool has_copyability(constraint_level level) {
+consteval bool has_copyability(constraint_level level) {
   switch (level) {
     case constraint_level::trivial: return is_trivially_copy_constructible_v<T>;
     case constraint_level::nothrow: return is_nothrow_copy_constructible_v<T>;
@@ -55,7 +55,7 @@ constexpr bool has_copyability(constraint_level level) {
   }
 }
 template <class T>
-constexpr bool has_relocatability(constraint_level level) {
+consteval bool has_relocatability(constraint_level level) {
   switch (level) {
     case constraint_level::trivial:
       return is_trivially_move_constructible_v<T> &&
@@ -69,7 +69,7 @@ constexpr bool has_relocatability(constraint_level level) {
   }
 }
 template <class T>
-constexpr bool has_destructibility(constraint_level level) {
+consteval bool has_destructibility(constraint_level level) {
   switch (level) {
     case constraint_level::trivial: return is_trivially_destructible_v<T>;
     case constraint_level::nothrow: return is_nothrow_destructible_v<T>;
@@ -106,8 +106,7 @@ struct dispatch_traits_impl<D, tuple<Args...>> : applicable_traits {
   static typename D::return_type dispatcher(char* p, Args... args)
       { return D{}(**reinterpret_cast<P*>(p), forward<Args>(args)...); }
 };
-template <class D>
-struct dispatch_traits : inapplicable_traits {};
+template <class D> struct dispatch_traits : inapplicable_traits {};
 template <class D> requires(requires {
       typename D::return_type;
       typename D::argument_types;
@@ -116,12 +115,6 @@ template <class D> requires(requires {
 struct dispatch_traits<D>
     : dispatch_traits_impl<D, typename D::argument_types> {};
 
-struct type_info_meta {
-  template <class P>
-  constexpr explicit type_info_meta(in_place_type_t<P>) : type(typeid(P)) {}
-
-  const type_info& type;
-};
 template <class D>
 struct dispatch_meta {
   template <class P>
@@ -155,7 +148,6 @@ struct destruction_meta {
 
   void (*destroy)(char*);
 };
-
 template <class... Ms>
 struct facade_meta : Ms... {
   template <class P>
@@ -206,7 +198,9 @@ struct basic_facade_traits_impl<F, tuple<Ds...>> : applicable_traits {
       conditional_meta_tag<F::minimum_copyability, copy_meta>,
       conditional_meta_tag<F::minimum_relocatability, relocation_meta>,
       conditional_meta_tag<F::minimum_destructibility, destruction_meta>,
-      type_info_meta>::type;
+      conditional_meta_tag<is_void_v<typename F::reflection_type> ?
+          constraint_level::none : constraint_level::nothrow,
+          typename F::reflection_type>>::type;
   using default_dispatch = typename default_traits<Ds...>::type;
 
   template <class D>
@@ -214,7 +208,8 @@ struct basic_facade_traits_impl<F, tuple<Ds...>> : applicable_traits {
 };
 template <class F> struct basic_facade_traits : inapplicable_traits {};
 template <class F> requires(requires {
-      typename F::dispatches;
+      typename F::dispatch_types;
+      typename F::reflection_type;
       typename integral_constant<size_t, F::maximum_size>;
       typename integral_constant<size_t, F::maximum_alignment>;
       typename integral_constant<constraint_level, F::minimum_copyability>;
@@ -222,7 +217,7 @@ template <class F> requires(requires {
       typename integral_constant<constraint_level, F::minimum_destructibility>;
     })
 struct basic_facade_traits<F> : basic_facade_traits_impl<
-    F, typename flattening_traits<typename F::dispatches>::type> {};
+    F, typename flattening_traits<typename F::dispatch_types>::type> {};
 
 template <class F, class Ds>
 struct facade_traits_impl : inapplicable_traits {};
@@ -238,22 +233,19 @@ struct facade_traits_impl<F, tuple<Ds...>> : applicable_traits {
       has_relocatability<P>(F::minimum_relocatability) &&
       has_destructibility<P>(F::minimum_destructibility) &&
       (dispatch_traits<Ds>::template applicable_operand<
-          typename pointer_traits<P>::value_type> && ...);
+          typename pointer_traits<P>::value_type> && ...) &&
+      (is_void_v<typename F::reflection_type> ||
+          is_constructible_v<typename F::reflection_type, in_place_type_t<P>>);
   template <class P> static constexpr meta_type meta{in_place_type<P>};
 };
 template <class F> struct facade_traits : facade_traits_impl<
-    F, typename flattening_traits<typename F::dispatches>::type> {};
+    F, typename flattening_traits<typename F::dispatch_types>::type> {};
 
 template <class T, class U> struct dependent_traits { using type = T; };
 template <class T, class U>
 using dependent_t = typename dependent_traits<T, U>::type;
 
 }  // namespace details
-
-class bad_proxy_cast : public bad_cast {
- public:
-  const char* what() const noexcept override { return "Bad proxy cast"; }
-};
 
 template <class P, class F>
 concept proxiable = details::pointer_traits<P>::applicable &&
@@ -410,8 +402,9 @@ class proxy {
   ~proxy() requires(!HasDestructor) = delete;
 
   bool has_value() const noexcept { return meta_ != nullptr; }
-  const type_info& type() const noexcept
-      { return meta_ == nullptr ? typeid(void) : meta_->type; }
+  decltype(auto) reflect() const noexcept
+      requires(!is_void_v<typename F::reflection_type>)
+      { return static_cast<const typename F::reflection_type&>(*meta_); }
   void reset() noexcept(HasNothrowDestructor) requires(HasDestructor)
       { this->~proxy(); meta_ = nullptr; }
   void swap(proxy& rhs) noexcept(HasNothrowMoveConstructor)
@@ -445,20 +438,6 @@ class proxy {
       noexcept(HasNothrowPolyAssignment<P, initializer_list<U>&, Args...>)
       requires(HasPolyAssignment<P, initializer_list<U>&, Args...>)
       { return emplace<P>(il, forward<Args>(args)...); }
-  template <class P>
-  P& cast() requires(proxiable<P, F>) {
-    if (type() != typeid(P)) {
-      throw bad_proxy_cast{};
-    }
-    return *reinterpret_cast<P*>(ptr_);
-  }
-  template <class P>
-  const P& cast() const requires(proxiable<P, F>) {
-    if (type() != typeid(P)) {
-      throw bad_proxy_cast{};
-    }
-    return *reinterpret_cast<const P*>(ptr_);
-  }
   template <class D = typename BasicTraits::default_dispatch, class... Args>
   decltype(auto) invoke(Args&&... args)
       requires(details::dependent_t<Traits, D>::applicable &&
