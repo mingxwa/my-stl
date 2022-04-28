@@ -1,6 +1,6 @@
 # Home page of my proposed C++ standard library implementations
 
-🔥 [P0957](https://wg21.link/p0957): Proxy: A Polymorphic Programming Library
+[P0957](https://wg21.link/p0957): Proxy: A Polymorphic Programming Library
 
 The organization structure of this repository is as follows:
 
